@@ -110,9 +110,12 @@ float gSunriseH=0, gSunsetH=0;
 Arduino_DataBus *tftBus = new Arduino_ESP32QSPI(
   PIN_TFT_CS, PIN_TFT_SCK,
   PIN_TFT_D0, PIN_TFT_D1, PIN_TFT_D2, PIN_TFT_D3);
-// ST77916 driver — `true` enables IPS color inversion (typical for round panels).
-// If the screen shows inverted colors after first flash, set this to false.
-Arduino_GFX *gfx = new Arduino_ST77916(tftBus, PIN_TFT_RST, TFT_ROTATION, true);
+// ST77916 driver — module ver:tft 1.53 uses 150-init (not default 180-init).
+// ips=true for IPS color inversion; flip to false if colors appear inverted.
+Arduino_GFX *gfx = new Arduino_ST77916(
+  tftBus, PIN_TFT_RST, TFT_ROTATION, true,
+  ST77916_TFTWIDTH, ST77916_TFTHEIGHT, 0, 0, 0, 0,
+  st77916_150_init_operations, sizeof(st77916_150_init_operations));
 
 // Screens
 uint8_t  gScreen      = SCR_RIDING;
