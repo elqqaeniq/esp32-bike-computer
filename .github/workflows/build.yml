@@ -97,13 +97,16 @@ jobs:
           fi
           echo "✓ Version match: $CODE_VERSION"
 
-      - name: Compile firmware
-        # FQBN matches BUILD.md board settings exactly:
+- name: Compile firmware
+        # FQBN matches BUILD.md board settings:
         # ESP32-S3, OPI PSRAM, 16MB flash, custom partitions.csv,
-        # QIO 80MHz flash, hardware CDC, 240MHz CPU.
+        # hardware CDC, 240MHz CPU.
+        # Note: ESP32-S3 does NOT support FlashFreq/FlashMode/UploadSpeed
+        # as FQBN options (Espressif removed them — defaults are correct
+        # for OPI PSRAM N16R8 modules).
         run: |
           arduino-cli compile \
-            --fqbn "esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=custom,FlashMode=qio,FlashFreq=80,CDCOnBoot=cdc,USBMode=hwcdc,CPUFreq=240,UploadSpeed=921600,DebugLevel=none" \
+            --fqbn "esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=custom,CDCOnBoot=cdc,USBMode=hwcdc,CPUFreq=240,DebugLevel=none" \
             --output-dir ./build \
             --warnings default \
             --verbose \
