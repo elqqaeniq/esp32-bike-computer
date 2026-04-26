@@ -33,8 +33,16 @@ Format: each version lists changes by category. Newest at the top.
 ### 📝 Code hygiene
 - Header comment in `esp32_bike_computer.ino` updated: Dusk2Dawn removed from
   required-libraries list, note added explaining the inline replacement.
-- `BUILD.md` library table: Dusk2Dawn row can be removed from local installs
-  (no action needed — unused library does not affect compilation).
+- `BUILD.md` library table: Dusk2Dawn row removed.
+
+### 📖 Documentation / Flash procedure
+- **`BUILD.md` §4.1 added**: manual flash instructions using `esptool` for
+  pre-built CI/Release binaries. Documents the `--flash-mode keep` requirement
+  — CI bootloader uses DIO mode; patching to QIO with esptool causes
+  `ets_loader.c 78` boot failure. Arduino IDE is unaffected (patches on-the-fly).
+- **`BUILD.md` troubleshooting**: added `ets_loader.c 78` section.
+- **`BUILD.md`**: expected boot output updated to v1.1.3.
+- **`README.md`**: version bumped to v1.1.3, roadmap updated.
 
 ---
 

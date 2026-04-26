@@ -118,6 +118,12 @@ jobs:
           echo "Sketch binary: $(stat -c%s ./build/esp32_bike_computer.ino.bin) bytes"
 
       - name: Rename firmware artifact
+        # NOTE: The bootloader binary is compiled with DIO flash mode
+        # (ESP32-S3 FQBN does not expose FlashMode as an option).
+        # Arduino IDE patches this on-the-fly during upload — no issue.
+        # When flashing pre-built binaries manually with esptool, users
+        # MUST use `--flash-mode keep` to avoid ets_loader.c 78 boot failure.
+        # See BUILD.md §4.1.
         run: |
           cp ./build/esp32_bike_computer.ino.bin \
              ./build/firmware-${{ steps.version.outputs.version }}.bin

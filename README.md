@@ -8,7 +8,7 @@ ESP32-S3 round-screen bike computer with GPS, IMU brake/pothole detection,
 BLE heart-rate monitor pairing, WS2812 turn signals, and OTA firmware updates
 via captive portal.
 
-> **Status:** v1.1.2 — code complete, awaiting field tests.
+> **Status:** v1.1.3 — first successful flash, field tests pending.
 > See [CHANGELOG.md](CHANGELOG.md) for version history and
 > [PROJECT_NOTES.md](PROJECT_NOTES.md) for roadmap and design rationale.
 
@@ -55,6 +55,7 @@ Quick path with Arduino IDE:
 7. Upload
 
 Pre-built firmware: see [Releases](../../releases/latest).
+Manual flash with `esptool`: see [`BUILD.md`](BUILD.md) §4.1.
 
 ---
 
@@ -63,10 +64,13 @@ Pre-built firmware: see [Releases](../../releases/latest).
 Every push to `main` triggers a build and produces a downloadable artifact
 (retained 30 days, available under the Actions tab).
 
-Tagged commits (`v1.1.2`, `v1.2.0`, etc.) trigger an automated release with:
+Tagged commits (`v1.1.3`, `v1.2.0`, etc.) trigger an automated release with:
 - Compiled `firmware-X.Y.Z.bin` (for OTA upload)
 - `partitions-X.Y.Z.bin` and `bootloader-X.Y.Z.bin` (for full-flash recovery)
 - Release notes auto-extracted from `CHANGELOG.md`
+
+> When flashing pre-built binaries manually with `esptool`, always use
+> `--flash-mode keep`. See [`BUILD.md`](BUILD.md) §4.1 for details.
 
 Tags matching `v*-beta.N` or `v*-rc.N` are marked as pre-releases.
 
@@ -98,7 +102,7 @@ esp32-bike-computer/
 
 ## Status & Roadmap
 
-Current: **v1.1.2** (code-complete, partition layout finalized, awaiting first field tests).
+Current: **v1.1.3** (first successful flash, Dusk2Dawn replaced, field tests pending).
 
 Upcoming:
 - **v1.2** — field tests, calibration, GPX track export via web UI

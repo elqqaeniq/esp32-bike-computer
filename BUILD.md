@@ -50,7 +50,6 @@ Install via Library Manager (Tools → Manage Libraries) unless noted:
 | Adafruit NeoPixel | Adafruit | WS2812 (replaces FastLED) | 1.12+ |
 | ESPAsyncWebServer | me-no-dev or ESP32Async fork | OTA captive portal | latest |
 | AsyncTCP | me-no-dev or ESP32Async fork | dependency of above | latest |
-| Dusk2Dawn | dmkishi | sunrise/sunset | 1.0.1+ |
 | Preferences | (built-in with ESP32 core) | NVS storage | — |
 | LittleFS | (built-in with ESP32 core 3.x) | File system (GPX, logs) | — |
 | BLEDevice | (built-in with ESP32 core) | BLE Central | — |
@@ -118,7 +117,7 @@ Otherwise the bootloader may use the old layout cached in `otadata`.
 Expected boot output:
 ```
 [INIT] PSRAM: 8.0 MB available
-=== ESP32 Bike Computer v1.1.2 ===
+=== ESP32 Bike Computer v1.1.3 ===
 INIT: Display...
 INIT: Display OK
 INIT: TE ISR attached on GPIO39
@@ -143,7 +142,77 @@ look at `ERR_NAMES` to find which module needs attention.
 
 ---
 
-## 5. OTA flash (after first flash)
+## 4.1 Manual flash with `esptool` (pre-built binaries from CI/Release)
+
+Use this when flashing pre-built `.bin` files from GitHub Releases or CI
+artifacts — instead of compiling in Arduino IDE.
+
+### Prerequisites
+```bash
+pip install esptool --break-system-packages
+```
+
+### Linux permissions (one-time)
+```bash
+sudo usermod -aG dialout $USER
+# Log out and back in for the group change to take effect.
+# Quick workaround (session-only): sudo chmod a+rw /dev/ttyACM0
+```
+
+### Full flash (3 files)
+
+Three files are needed from the release:
+- `bootloader-X.Y.Z.bin` — second-stage bootloader
+- `partitions-X.Y.Z.bin` — partition table
+- `firmware-X.Y.Z.bin` — application firmware
+
+Enter bootloader mode: hold **BOOT** → press **RESET** → release **BOOT**.
+
+```bash
+python3 -m esptool \
+  --chip esp32s3 \
+  --port /dev/ttyACM0 \
+  --baud 921600 \
+  --before default-reset \
+  --after hard-reset \
+  write-flash \
+  --flash-mode keep \
+  --flash-size 16MB \
+  0x0000  bootloader-X.Y.Z.bin \
+  0x8000  partitions-X.Y.Z.bin \
+  0x10000 firmware-X.Y.Z.bin
+```
+
+> ⚠️ **`--flash-mode keep` is required.** CI-compiled bootloader uses DIO
+> mode internally. Arduino IDE's esptool patches this on-the-fly during
+> upload, but manual flashing with `--flash-mode qio` corrupts the
+> bootloader header and causes `ets_loader.c 78` boot failure. `keep`
+> preserves the original mode byte and works correctly.
+
+> On **Windows** replace `/dev/ttyACM0` with `COM3` (or whichever port
+> appears in Device Manager).
+
+### First flash or partition layout change — erase first
+
+If this is the very first flash or if `partitions.csv` has changed since
+the last version, erase flash before writing:
+
+```bash
+python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 erase-flash
+```
+
+Then re-enter bootloader (BOOT+RESET) and run the `write-flash` command above.
+
+### Verify
+
+```bash
+# Linux — press RESET on board to see boot log
+sudo cat /dev/ttyACM0
+# or
+picocom -b 115200 /dev/ttyACM0
+```
+
+---
 
 1. From settings menu on device: navigate to OTA → Start OTA.
 2. ESP creates WiFi AP "BikeComp_OTA" (password "12345678").
@@ -203,3 +272,10 @@ The .bin appears in the sketch folder under `build/esp32.esp32.esp32s3/`.
 
 ### Encoder direction reversed
 - Swap `PIN_ENC_CLK` and `PIN_ENC_DT` in config.h, or invert sign in `ENC_TBL`.
+
+### `ets_loader.c 78` boot loop after manual flash
+- **Cause**: bootloader header patched with wrong flash mode. CI bootloader
+  uses DIO internally; specifying `--flash-mode qio` in esptool corrupts it.
+- **Fix**: erase flash (`python3 -m esptool --chip esp32s3 erase-flash`),
+  then reflash with `--flash-mode keep` (see §4.1).
+- Does NOT affect Arduino IDE uploads — the IDE patches the header correctly.
