@@ -85,7 +85,7 @@ jobs:
             echo "Building dev artifact: dev-$SHORT_SHA"
           fi
 
-      - name: Sanity check — version in code matches tag
+      - name: Sanity check version in code matches tag
         if: steps.version.outputs.is_release == 'true'
         run: |
           CODE_VERSION=$(grep -oP 'FW_VERSION\s+"\K[^"]+' esp32_bike_computer/config.h)
@@ -95,15 +95,15 @@ jobs:
             echo "::error::Update FW_VERSION in esp32_bike_computer/config.h before tagging."
             exit 1
           fi
-          echo "✓ Version match: $CODE_VERSION"
+          echo "Version match: $CODE_VERSION"
 
-- name: Compile firmware
-        # FQBN matches BUILD.md board settings:
-        # ESP32-S3, OPI PSRAM, 16MB flash, custom partitions.csv,
-        # hardware CDC, 240MHz CPU.
-        # Note: ESP32-S3 does NOT support FlashFreq/FlashMode/UploadSpeed
-        # as FQBN options (Espressif removed them — defaults are correct
+      - name: Compile firmware
+        # FQBN matches BUILD.md board settings.
+        # NOTE: ESP32-S3 does NOT support FlashFreq, FlashMode, UploadSpeed
+        # as FQBN options (Espressif removed these — defaults are correct
         # for OPI PSRAM N16R8 modules).
+        # Use `arduino-cli board details --fqbn esp32:esp32:esp32s3` to list
+        # all valid options.
         run: |
           arduino-cli compile \
             --fqbn "esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=custom,CDCOnBoot=cdc,USBMode=hwcdc,CPUFreq=240,DebugLevel=none" \
@@ -128,7 +128,7 @@ jobs:
           cp ./build/esp32_bike_computer.ino.bootloader.bin \
              ./build/bootloader-${{ steps.version.outputs.version }}.bin || true
 
-      - name: Upload build artifact (every push, 30 days)
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: firmware-${{ steps.version.outputs.version }}
@@ -138,13 +138,10 @@ jobs:
             ./build/bootloader-*.bin
           retention-days: 30
 
-      # ─── Release-only steps below ────────────────────────────────
-
       - name: Extract changelog section for this version
         if: steps.version.outputs.is_release == 'true'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          # Extract everything between "## [VERSION]" and the next "## [..." header.
           awk -v v="$VERSION" '
             $0 ~ "^## \\[" v "\\]" { flag=1; next }
             /^## \[/ && flag { exit }
@@ -169,10 +166,10 @@ jobs:
           TAG="${{ steps.version.outputs.tag }}"
           if [[ "$TAG" =~ -(beta|rc|alpha|pre) ]]; then
             echo "is_prerelease=true" >> $GITHUB_OUTPUT
-            echo "Tag $TAG → marked as pre-release"
+            echo "Tag $TAG marked as pre-release"
           else
             echo "is_prerelease=false" >> $GITHUB_OUTPUT
-            echo "Tag $TAG → standard release"
+            echo "Tag $TAG is a standard release"
           fi
 
       - name: Create GitHub Release
