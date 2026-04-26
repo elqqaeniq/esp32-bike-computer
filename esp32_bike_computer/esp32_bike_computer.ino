@@ -59,6 +59,7 @@ HRSettings    gHRSett;
 //  (needed because Arduino .ino compiles top-to-bottom)
 // =============================================================
 extern uint8_t  gMapMode;    // defined below drawStatusBar
+extern float    gMapOffX, gMapOffY, gMapScale; // defined below drawStatusBar
 extern uint32_t gLastGpsMs;  // defined below processGPS
 void _calcSlope(float distM, float altM);  // defined below processGPS
 void settingsEncPress();  // defined below handleEncoder
@@ -138,7 +139,7 @@ uint32_t gTeFpsLastCount = 0;
 uint8_t  gDisplayFps = 0;
 
 void IRAM_ATTR teISR() {
-  gTeTickCount++;
+  gTeTickCount += 1;
 }
 
 // =============================================================
