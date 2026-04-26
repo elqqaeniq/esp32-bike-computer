@@ -4,6 +4,40 @@ Format: each version lists changes by category. Newest at the top.
 
 ---
 
+## [1.1.3] — 2026-04-26 — Remove Dusk2Dawn, inline USNO sunrise/sunset
+
+### 🔧 Dependency removed
+- **Dusk2Dawn library eliminated.** The library included `<Math.h>` (capital M)
+  which caused a fatal compile error on Linux (GitHub Actions, case-sensitive FS):
+  `fatal error: Math.h: No such file or directory`. The bug exists in the only
+  released version (1.0.1) and has no upstream fix.
+- Sunrise/sunset is now computed by an **inline USNO algorithm** directly in
+  `esp32_bike_computer.ino` — same algorithm Dusk2Dawn used internally,
+  sourced from edwilliams.org/sunrise_sunset_algorithm.htm.
+
+### ✨ New function: `calcSunMinutes()`
+- Signature: `calcSunMinutes(year, month, day, lat, lon, utcOffset, dst, isSunrise) → int`
+- Returns **minutes from local midnight**, matching the previous Dusk2Dawn API
+  (`sr / 60.0f` conversion unchanged in `updateAstronomy()`).
+- Returns **`-1`** for polar day / polar night (sun never rises or sets) —
+  previously Dusk2Dawn returned `−1` for the same condition; `gSunriseH` is set
+  to `0.0f` in this case, keeping the existing `gSunriseH > 0` guard in the UI intact.
+- Uses `sinf` / `cosf` / `floorf` / `fmodf` (float variants) — no overhead on Xtensa.
+- Accuracy: ±1 min for latitudes ±72°, degrades toward polar circle (irrelevant
+  for cycling use).
+
+### 🗑 Build system
+- **`build.yml`**: `arduino-cli lib install "Dusk2Dawn"` step removed.
+  CI now installs one fewer library and has no Linux/case-sensitivity patch needed.
+
+### 📝 Code hygiene
+- Header comment in `esp32_bike_computer.ino` updated: Dusk2Dawn removed from
+  required-libraries list, note added explaining the inline replacement.
+- `BUILD.md` library table: Dusk2Dawn row can be removed from local installs
+  (no action needed — unused library does not affect compilation).
+
+---
+
 ## [1.1.2] — 2026-04-26 — File system, partition, NVS wear leveling
 
 ### 🗄 File system / Partition table

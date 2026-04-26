@@ -4,7 +4,7 @@
 //  NRF52840 parts: ALL COMMENTED OUT
 // =============================================================
 
-#define FW_VERSION    "1.1.2"
+#define FW_VERSION    "1.1.3"
 #define FW_BUILD_DATE __DATE__ " " __TIME__
 #define DEVICE_NAME   "ESP32-BikeMain"
 

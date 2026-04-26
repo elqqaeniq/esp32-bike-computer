@@ -54,7 +54,6 @@ jobs:
           arduino-cli lib install "GFX Library for Arduino"
           arduino-cli lib install "TinyGPSPlus"
           arduino-cli lib install "Adafruit NeoPixel"
-          arduino-cli lib install "Dusk2Dawn"
 
       - name: Install ESP32Async fork (AsyncWebServer + AsyncTCP)
         # Using ESP32Async fork — Core 3.x compatible, unlike outdated me-no-dev.

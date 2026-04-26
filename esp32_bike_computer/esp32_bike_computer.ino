@@ -1,5 +1,5 @@
 // =============================================================
-//  ESP32 BIKE COMPUTER — Main Sketch v1.1.2
+//  ESP32 BIKE COMPUTER — Main Sketch v1.1.3
 //  Board: ESP32-S3-N16R8
 //  Arduino IDE board: "ESP32S3 Dev Module"
 //
@@ -10,8 +10,8 @@
 //    • MPU6050 (or use included mpu6500.h)    — IMU I2C
 //    • ESPAsyncWebServer (me-no-dev)          — OTA web server
 //    • AsyncTCP (me-no-dev)                   — needed by above
-//    • Dusk2Dawn (dmkishi)                    — sunrise/sunset
 //    • LittleFS (built-in with ESP32 core 3.x) — file system
+//    (Dusk2Dawn removed in v1.1.3 — sunrise/sunset computed inline, USNO algorithm)
 //
 //  Board Settings:
 //    Flash: 16MB (128Mb), QIO 80MHz
@@ -36,7 +36,6 @@
 #include <TinyGPS++.h>
 #include <Adafruit_NeoPixel.h>
 #include <Preferences.h>
-#include <Dusk2Dawn.h>
 #include <LittleFS.h>
 
 // =============================================================
@@ -411,18 +410,84 @@ inline void refreshIMUSnapshot() {
 }
 
 // =============================================================
-//  ASTRONOMY
+//  ASTRONOMY — USNO sunrise/sunset algorithm (v1.1.3)
+//  Replaces Dusk2Dawn library. Source: edwilliams.org/sunrise_sunset_algorithm.htm
+//  Accuracy: ±1 min for latitudes within ±72°. Returns minutes from local
+//  midnight, or -1 for polar day/night (sun never rises/sets).
 // =============================================================
-uint32_t gLastAstroMs=0;
+static int calcSunMinutes(int year, int month, int day,
+                          float lat, float lon,
+                          float utcOffset, bool dst, bool isSunrise) {
+  // Day of year (N)
+  float N1 = floorf(275.0f * month / 9.0f);
+  float N2 = floorf((month + 9.0f) / 12.0f);
+  float N3 = 1.0f + floorf((year - 4.0f * floorf(year / 4.0f) + 2.0f) / 3.0f);
+  float N  = N1 - (N2 * N3) + day - 30.0f;
+
+  // Longitude hour value and approximate time
+  float lngHour = lon / 15.0f;
+  float t = isSunrise ? N + (6.0f  - lngHour) / 24.0f
+                      : N + (18.0f - lngHour) / 24.0f;
+
+  // Sun's mean anomaly
+  float M = (0.9856f * t) - 3.289f;
+
+  // Sun's true longitude (L), clamped to [0, 360)
+  float L = M + (1.916f * sinf(M * DEG_TO_RAD))
+              + (0.020f * sinf(2.0f * M * DEG_TO_RAD))
+              + 282.634f;
+  L = fmodf(L, 360.0f);
+  if (L < 0) L += 360.0f;
+
+  // Sun's right ascension (RA), adjusted to same quadrant as L
+  float RA = atanf(0.91764f * tanf(L * DEG_TO_RAD)) * RAD_TO_DEG;
+  RA = fmodf(RA, 360.0f);
+  if (RA < 0) RA += 360.0f;
+  float Lq = floorf(L  / 90.0f) * 90.0f;
+  float Rq = floorf(RA / 90.0f) * 90.0f;
+  RA = (RA + (Lq - Rq)) / 15.0f;
+
+  // Sun's declination
+  float sinDec = 0.39782f * sinf(L * DEG_TO_RAD);
+  float cosDec = cosf(asinf(sinDec));
+
+  // Sun's local hour angle — zenith 90°50' (official sunrise/sunset)
+  const float cosZenith = cosf(90.833f * DEG_TO_RAD);
+  float cosH = (cosZenith - sinDec * sinf(lat * DEG_TO_RAD))
+               / (cosDec  * cosf(lat * DEG_TO_RAD));
+
+  // Polar day / polar night
+  if (cosH >  1.0f) return -1;  // sun never rises
+  if (cosH < -1.0f) return -1;  // sun never sets
+
+  float H = isSunrise ? 360.0f - acosf(cosH) * RAD_TO_DEG
+                      :           acosf(cosH) * RAD_TO_DEG;
+  H /= 15.0f;
+
+  // Local mean time of rise/set
+  float T  = H + RA - (0.06571f * t) - 6.622f;
+  float UT = fmodf(T - lngHour, 24.0f);
+  if (UT < 0) UT += 24.0f;
+
+  // Convert UTC → local
+  float local = fmodf(UT + utcOffset + (dst ? 1.0f : 0.0f), 24.0f);
+  if (local < 0) local += 24.0f;
+
+  return (int)(local * 60.0f);
+}
+
+uint32_t gLastAstroMs = 0;
 void updateAstronomy(uint32_t now) {
   if (!gGpsFixed) return;
-  if (now-gLastAstroMs < 3600000UL) return;
-  gLastAstroMs=now;
-  float utcOff = gTimeSett.utcHalfHours*0.5f;
-  Dusk2Dawn loc(gLat,gLon,utcOff);
-  int sr=loc.sunrise(gps.date.year(),gps.date.month(),gps.date.day(),gTimeSett.dstEnabled);
-  int ss=loc.sunset (gps.date.year(),gps.date.month(),gps.date.day(),gTimeSett.dstEnabled);
-  gSunriseH=sr/60.0f; gSunsetH=ss/60.0f;
+  if (now - gLastAstroMs < 3600000UL) return;
+  gLastAstroMs = now;
+  float utcOff = gTimeSett.utcHalfHours * 0.5f;
+  int sr = calcSunMinutes(gps.date.year(), gps.date.month(), gps.date.day(),
+                          gLat, gLon, utcOff, gTimeSett.dstEnabled, true);
+  int ss = calcSunMinutes(gps.date.year(), gps.date.month(), gps.date.day(),
+                          gLat, gLon, utcOff, gTimeSett.dstEnabled, false);
+  gSunriseH = (sr >= 0) ? sr / 60.0f : 0.0f;
+  gSunsetH  = (ss >= 0) ? ss / 60.0f : 0.0f;
   DBG("Astro: rise=%.2f set=%.2f", gSunriseH, gSunsetH);
 }
 
