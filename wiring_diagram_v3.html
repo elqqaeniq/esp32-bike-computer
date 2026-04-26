@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<title>ESP32-S3 Bike Computer · Wiring v3 · FW 1.1.2</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --fg: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --warn: #f0883e;
+    --new: #56d364;
+    --hdr: #1f2937;
+    --card: #161b22;
+    --border: #30363d;
+    --code-bg: #161b22;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "SF Pro", "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    margin: 0;
+    padding: 24px;
+    line-height: 1.55;
+  }
+  .container { max-width: 1100px; margin: 0 auto; }
+  h1 {
+    font-size: 28px;
+    border-bottom: 2px solid var(--accent);
+    padding-bottom: 8px;
+    margin: 0 0 8px;
+  }
+  .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 24px; }
+  .meta {
+    display: flex; flex-wrap: wrap; gap: 12px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 6px; padding: 12px; margin-bottom: 24px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 13px;
+  }
+  .meta b { color: var(--accent); }
+  .section {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 6px; padding: 16px 20px; margin-bottom: 20px;
+  }
+  h2 {
+    font-size: 18px; margin: 0 0 12px;
+    color: var(--accent);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 6px;
+  }
+  h3 {
+    font-size: 15px; margin: 16px 0 8px;
+    color: var(--fg);
+  }
+  .badge {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 10px; font-weight: 600; margin-left: 6px;
+    vertical-align: middle;
+  }
+  .badge-new { background: var(--new); color: #052e10; }
+  .badge-warn { background: var(--warn); color: #2e1505; }
+  table {
+    width: 100%; border-collapse: collapse; font-size: 13px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  th, td {
+    padding: 6px 10px; text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+  td.gpio { color: var(--accent); font-weight: 600; width: 70px; }
+  td.role { color: var(--muted); }
+  tr.new td.gpio { color: var(--new); }
+  tr.te td { background: rgba(86, 211, 100, 0.06); }
+  .note {
+    background: rgba(240, 136, 62, 0.08);
+    border-left: 3px solid var(--warn);
+    padding: 8px 12px; margin: 10px 0;
+    font-size: 13px;
+  }
+  .note b { color: var(--warn); }
+  code, .mono {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    background: var(--code-bg); padding: 1px 5px; border-radius: 3px;
+    font-size: 12px;
+  }
+  ul { margin: 6px 0; padding-left: 22px; }
+  li { margin: 3px 0; }
+  .grid2 {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+  }
+  @media (max-width: 720px) {
+    .grid2 { grid-template-columns: 1fr; }
+    body { padding: 14px; }
+  }
+  footer {
+    color: var(--muted); font-size: 12px; text-align: center;
+    margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--border);
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <h1>BIKE COMPUTER · Wiring Diagram v3</h1>
+  <div class="subtitle">ESP32-S3-N16R8 · QSPI display · WS2812 front · BLE Garmin HR · ATGM336H GPS · MPU6500</div>
+
+  <div class="meta">
+    <div><b>BOARD:</b> ESP32-S3-N16R8 (16MB Flash · 8MB OPI PSRAM)</div>
+    <div><b>FW:</b> 1.1.2</div>
+    <div><b>POWER:</b> 2× 18650 (3000 mAh, 2P)</div>
+    <div><b>DISPLAY:</b> QSPI 4-LINE</div>
+    <div><b>FS:</b> LittleFS ~9.875MB</div>
+    <div><b>UPDATED:</b> 2026-04-26</div>
+  </div>
+
+  <!-- ========= PINOUT BY MODULE ========= -->
+  <section class="section">
+    <h2>1. Pinout by module</h2>
+
+    <div class="grid2">
+      <!-- DISPLAY -->
+      <div>
+        <h3>Display · QSPI <span class="badge badge-new">v1.1.2 +TE</span></h3>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">
+          ST77916 360×360 round · Module markings: TE BL CS RST IO3 IO2 IO1 SDA SCL VCC GND
+        </div>
+        <table>
+          <thead><tr><th>Module</th><th>GPIO</th><th>Role</th></tr></thead>
+          <tbody>
+            <tr><td>SDA</td><td class="gpio">11</td><td class="role">D0 — data lane 0</td></tr>
+            <tr><td>SCL</td><td class="gpio">12</td><td class="role">SCK — clock</td></tr>
+            <tr><td>CS</td><td class="gpio">10</td><td class="role">Chip select</td></tr>
+            <tr><td>IO1</td><td class="gpio">13</td><td class="role">D1 — data lane 1</td></tr>
+            <tr><td>IO2</td><td class="gpio">15</td><td class="role">D2 — data lane 2</td></tr>
+            <tr><td>IO3</td><td class="gpio">38</td><td class="role">D3 — data lane 3</td></tr>
+            <tr><td>RST</td><td class="gpio">14</td><td class="role">Reset</td></tr>
+            <tr><td>BL</td><td class="gpio">21</td><td class="role">Backlight (LEDC PWM)</td></tr>
+            <tr class="new te"><td>TE</td><td class="gpio">39</td><td class="role">Tearing-effect → ISR FPS counter</td></tr>
+            <tr><td>VCC</td><td class="gpio">3.3V</td><td class="role">⚠ NOT 5V tolerant</td></tr>
+            <tr><td>GND</td><td class="gpio">GND</td><td class="role">—</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- GPS -->
+      <div>
+        <h3>GPS · UART1</h3>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">
+          ATGM336H · 9600 baud · NMEA · SERIAL_8N1
+        </div>
+        <table>
+          <thead><tr><th>Module</th><th>GPIO</th><th>Role</th></tr></thead>
+          <tbody>
+            <tr><td>TX</td><td class="gpio">18</td><td class="role">ESP RX1 ← GPS TX</td></tr>
+            <tr><td>RX</td><td class="gpio">17</td><td class="role">ESP TX1 → GPS RX</td></tr>
+            <tr><td>VCC</td><td class="gpio">3.3V</td><td class="role">~30 mA peak</td></tr>
+            <tr><td>GND</td><td class="gpio">GND</td><td class="role">—</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- IMU -->
+      <div>
+        <h3>IMU · I²C</h3>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">
+          MPU6500 · I²C addr 0x68 · 400 kHz · 50 Hz sample
+        </div>
+        <table>
+          <thead><tr><th>Module</th><th>GPIO</th><th>Role</th></tr></thead>
+          <tbody>
+            <tr><td>SDA</td><td class="gpio">8</td><td class="role">I²C data</td></tr>
+            <tr><td>SCL</td><td class="gpio">9</td><td class="role">I²C clock</td></tr>
+            <tr><td>VCC</td><td class="gpio">3.3V</td><td class="role">—</td></tr>
+            <tr><td>GND</td><td class="gpio">GND</td><td class="role">—</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- LEDs -->
+      <div>
+        <h3>WS2812 · Front LEDs</h3>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">
+          16× WS2812B · Adafruit_NeoPixel · NEO_GRB · 800 kHz
+        </div>
+        <table>
+          <thead><tr><th>Module</th><th>GPIO</th><th>Role</th></tr></thead>
+          <tbody>
+            <tr><td>DIN</td><td class="gpio">16</td><td class="role">Data input (any GPIO OK)</td></tr>
+            <tr><td>VCC</td><td class="gpio">5V</td><td class="role">~960 mA max (16 LEDs full white)</td></tr>
+            <tr><td>GND</td><td class="gpio">GND</td><td class="role">—</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ENCODER -->
+      <div>
+        <h3>Encoder · EC11</h3>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">
+          Rotary + push · Internal pull-ups · ISR on CHANGE both lines
+        </div>
+        <table>
+          <thead><tr><th>Module</th><th>GPIO</th><th>Role</th></tr></thead>
+          <tbody>
+            <tr><td>CLK</td><td class="gpio">4</td><td class="role">Quad A (INPUT_PULLUP)</td></tr>
+            <tr><td>DT</td><td class="gpio">5</td><td class="role">Quad B (INPUT_PULLUP)</td></tr>
+            <tr><td>SW</td><td class="gpio">6</td><td class="role">Push (INPUT_PULLUP, active LOW)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- BUTTONS -->
+      <div>
+        <h3>Buttons · TTP223</h3>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">
+          3× touch button modules · Push-pull · active HIGH · INPUT_PULLDOWN as safety
+        </div>
+        <table>
+          <thead><tr><th>Function</th><th>GPIO</th><th>Role</th></tr></thead>
+          <tbody>
+            <tr><td>B1 LEFT</td><td class="gpio">1</td><td class="role">Left turn signal</td></tr>
+            <tr><td>B2 RIGHT</td><td class="gpio">2</td><td class="role">Right turn signal</td></tr>
+            <tr><td>B3 TY/HAZ</td><td class="gpio">3</td><td class="role">Thank-you (short) / Hazard (long)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- POWER -->
+      <div>
+        <h3>Power · Battery</h3>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">
+          2× 18650 → ADC divider · Vbat ─ R1=200kΩ ─ ADC ─ R2=100kΩ ─ GND · ratio 3.0
+        </div>
+        <table>
+          <thead><tr><th>Net</th><th>GPIO</th><th>Role</th></tr></thead>
+          <tbody>
+            <tr><td>Vbat / divider</td><td class="gpio">7</td><td class="role">analogReadMilliVolts (att 11dB)</td></tr>
+            <tr><td>RC filter</td><td class="gpio">—</td><td class="role">100nF cap to GND on ADC</td></tr>
+            <tr><td>Vbat raw</td><td class="gpio">BAT+</td><td class="role">3.0–4.2 V (linear @ 1.0–1.4V ADC)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- NRF -->
+      <div>
+        <h3>Reserved · NRF52840</h3>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">
+          NRF52840 rear unit (planned) · All firmware code commented · activate in v2.0
+        </div>
+        <table>
+          <thead><tr><th>Aspect</th><th colspan="2">Status</th></tr></thead>
+          <tbody>
+            <tr><td>Status</td><td colspan="2" class="role">All NRF code paths disabled</td></tr>
+            <tr><td>BLE link</td><td colspan="2" class="role">ESP↔NRF over BLE GATT (planned)</td></tr>
+            <tr><td>Rear LEDs</td><td colspan="2" class="role">WS2812 × 24 driven by NRF</td></tr>
+            <tr><td>Cadence</td><td colspan="2" class="role">Magene S3 ANT+ via NRF</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========= PARTITION TABLE ========= -->
+  <section class="section">
+    <h2>2. Flash partition layout <span class="badge badge-new">v1.1.2</span></h2>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:8px;">
+      Custom <code>partitions.csv</code> in sketch folder. 16MB total.
+    </div>
+    <table>
+      <thead><tr><th>Partition</th><th>Offset</th><th>Size</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td>(bootloader)</td><td class="gpio">0x000000</td><td>32 KB</td><td class="role">core-managed</td></tr>
+        <tr><td>(partition tbl)</td><td class="gpio">0x008000</td><td>4 KB</td><td class="role">this table</td></tr>
+        <tr><td>nvs</td><td class="gpio">0x009000</td><td>20 KB</td><td class="role">Preferences (settings, theme, odometer, IMU cal)</td></tr>
+        <tr><td>otadata</td><td class="gpio">0x00E000</td><td>8 KB</td><td class="role">bootloader OTA flag</td></tr>
+        <tr><td>app0 (ota_0)</td><td class="gpio">0x010000</td><td>3 MB</td><td class="role">primary firmware slot</td></tr>
+        <tr><td>app1 (ota_1)</td><td class="gpio">0x310000</td><td>3 MB</td><td class="role">secondary firmware slot (OTA target)</td></tr>
+        <tr class="new"><td>coredump</td><td class="gpio">0x610000</td><td>64 KB</td><td class="role">panic dump for post-mortem debug</td></tr>
+        <tr class="new"><td>littlefs</td><td class="gpio">0x620000</td><td>~9.875 MB</td><td class="role">file system (GPX tracks, logs)</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ========= NOTES ========= -->
+  <section class="section">
+    <h2>3. Notes &amp; warnings</h2>
+
+    <div class="note">
+      <b>QSPI advantage</b> — 4 parallel data lines @ 40 MHz give ≈4× the bandwidth
+      of single-SPI on the same clock. A full 360×360 RGB565 frame (≈ 252 KB)
+      takes ~13 ms at 40 MHz QSPI vs ~50 ms at 40 MHz single-SPI.
+    </div>
+
+    <div class="note">
+      <b>QSPI ≠ SPI flash</b> — ESP32-S3 OPI PSRAM uses dedicated flash QSPI lines
+      (GPIO 26–37). Display QSPI is a <i>separate</i> logical bus on regular GPIOs
+      (10/11/12/13/15/38). Don't confuse them.
+    </div>
+
+    <div class="note">
+      <b>If breadboard wiring is flaky</b> — drop <code>TFT_SPI_FREQ</code> from 40 MHz
+      to 20 MHz in <code>config.h</code>. 4 parallel lines on long jumper wires can
+      cross-talk and corrupt frames. PCB with proper layout handles 40 MHz fine.
+    </div>
+
+    <div class="note">
+      <b>If colors are inverted</b> — flip the 4th argument of
+      <code>Arduino_ST77916(tftBus, RST, ROT, true)</code> from <code>true</code>
+      to <code>false</code>. IPS panels vary.
+    </div>
+
+    <div class="note">
+      <b>3.3V only on display</b> — ST77916 module is NOT 5V tolerant on logic or
+      supply. Both VCC and IO lines must be 3.3V — same as ESP32-S3 GPIOs.
+    </div>
+
+    <div class="note">
+      <b>TE pin behavior (v1.1.2)</b> — drives the FPS-counter ISR only.
+      Display draw loop is NOT yet sync'd to TE — that's deferred to v1.2 with
+      partial redraws. If TE wire is missing, ISR never fires and
+      <code>gDisplayFps</code> stays 0; no other harm.
+    </div>
+
+    <div class="note">
+      <b>Partition table change (v1.1.2)</b> — when upgrading from v1.1.1, run
+      <i>one</i> upload with <i>Erase All Flash Before Sketch Upload → Enabled</i>,
+      otherwise the bootloader keeps the old layout. After that upload set it
+      back to Disabled to preserve NVS.
+    </div>
+
+    <h3>GPIO budget after v1.1.2</h3>
+    <ul>
+      <li><b>Used:</b> 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 21, 38, <span style="color:var(--new)">39</span></li>
+      <li><b>Free for v2.0 (NRF link, etc.):</b> 40, 41, 42, 47</li>
+      <li><b>Reserved:</b> 26–37 (PSRAM), 45/48 (strapping), 19/20 (USB)</li>
+    </ul>
+  </section>
+
+  <footer>
+    BIKE COMPUTER · ESP32-S3 · WIRING v3 · FW 1.1.2 · 2026-04-26
+  </footer>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,41 @@
+# ─── Arduino IDE / arduino-cli build outputs ───
+build/
+*.ino.bin
+*.ino.elf
+*.ino.map
+*.ino.hex
+*.ino.bootloader.bin
+*.ino.partitions.bin
+*.ino.merged.bin
+
+# ─── arduino-cli config / cache ───
+.arduino-cli/
+.arduino15/
+
+# ─── PlatformIO (in case we move to it later) ───
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# ─── OS junk ───
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── Editor / IDE configs ───
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.history/
+
+# ─── Local logs / dumps ───
+*.log
+*.coredump
+serial_log_*.txt
+
+# ─── Local test/scratch ───
+scratch/
+local_test/
+*.local

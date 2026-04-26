@@ -1,0 +1,186 @@
+name: Build & Release Firmware
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel in-progress runs on the same branch when a new push arrives.
+# For tags, do NOT cancel — releases must complete.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/') }}
+
+# Releases need write permission to repo contents.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup arduino-cli
+        uses: arduino/setup-arduino-cli@v2
+
+      # Cache the ESP32 core (~500MB) and installed libraries.
+      # Saves 2-3 minutes per build after the first run.
+      - name: Cache ESP32 toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.arduino15
+            ~/Arduino/libraries
+          key: arduino-${{ runner.os }}-esp32-${{ hashFiles('.github/workflows/build.yml') }}
+          restore-keys: |
+            arduino-${{ runner.os }}-esp32-
+
+      - name: Install ESP32 core 3.x
+        run: |
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls \
+            https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32
+
+      - name: Install libraries from Arduino registry
+        run: |
+          arduino-cli lib install "GFX Library for Arduino"
+          arduino-cli lib install "TinyGPSPlus"
+          arduino-cli lib install "Adafruit NeoPixel"
+          arduino-cli lib install "Dusk2Dawn"
+
+      - name: Install ESP32Async fork (AsyncWebServer + AsyncTCP)
+        # Using ESP32Async fork — Core 3.x compatible, unlike outdated me-no-dev.
+        run: |
+          mkdir -p ~/Arduino/libraries
+          cd ~/Arduino/libraries
+          if [ ! -d AsyncTCP ]; then
+            git clone --depth=1 https://github.com/ESP32Async/AsyncTCP.git
+          fi
+          if [ ! -d ESPAsyncWebServer ]; then
+            git clone --depth=1 https://github.com/ESP32Async/ESPAsyncWebServer.git
+          fi
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            TAG="${GITHUB_REF#refs/tags/}"
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
+            echo "is_release=true" >> $GITHUB_OUTPUT
+            echo "Building RELEASE: $TAG (version $VERSION)"
+          else
+            SHORT_SHA=$(git rev-parse --short HEAD)
+            echo "version=dev-$SHORT_SHA" >> $GITHUB_OUTPUT
+            echo "is_release=false" >> $GITHUB_OUTPUT
+            echo "Building dev artifact: dev-$SHORT_SHA"
+          fi
+
+      - name: Sanity check — version in code matches tag
+        if: steps.version.outputs.is_release == 'true'
+        run: |
+          CODE_VERSION=$(grep -oP 'FW_VERSION\s+"\K[^"]+' esp32_bike_computer/config.h)
+          TAG_VERSION="${{ steps.version.outputs.version }}"
+          if [ "$CODE_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::FW_VERSION in config.h ($CODE_VERSION) does not match tag (v$TAG_VERSION)"
+            echo "::error::Update FW_VERSION in esp32_bike_computer/config.h before tagging."
+            exit 1
+          fi
+          echo "✓ Version match: $CODE_VERSION"
+
+      - name: Compile firmware
+        # FQBN matches BUILD.md board settings exactly:
+        # ESP32-S3, OPI PSRAM, 16MB flash, custom partitions.csv,
+        # QIO 80MHz flash, hardware CDC, 240MHz CPU.
+        run: |
+          arduino-cli compile \
+            --fqbn "esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=custom,FlashMode=qio,FlashFreq=80,CDCOnBoot=cdc,USBMode=hwcdc,CPUFreq=240,UploadSpeed=921600,DebugLevel=none" \
+            --output-dir ./build \
+            --warnings default \
+            --verbose \
+            ./esp32_bike_computer
+
+      - name: Show build size
+        run: |
+          ls -la ./build/
+          echo "---"
+          echo "Sketch binary: $(stat -c%s ./build/esp32_bike_computer.ino.bin) bytes"
+
+      - name: Rename firmware artifact
+        run: |
+          cp ./build/esp32_bike_computer.ino.bin \
+             ./build/firmware-${{ steps.version.outputs.version }}.bin
+          # Also keep partition table and bootloader for full-flash recovery
+          cp ./build/esp32_bike_computer.ino.partitions.bin \
+             ./build/partitions-${{ steps.version.outputs.version }}.bin || true
+          cp ./build/esp32_bike_computer.ino.bootloader.bin \
+             ./build/bootloader-${{ steps.version.outputs.version }}.bin || true
+
+      - name: Upload build artifact (every push, 30 days)
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ steps.version.outputs.version }}
+          path: |
+            ./build/firmware-*.bin
+            ./build/partitions-*.bin
+            ./build/bootloader-*.bin
+          retention-days: 30
+
+      # ─── Release-only steps below ────────────────────────────────
+
+      - name: Extract changelog section for this version
+        if: steps.version.outputs.is_release == 'true'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          # Extract everything between "## [VERSION]" and the next "## [..." header.
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" { flag=1; next }
+            /^## \[/ && flag { exit }
+            flag { print }
+          ' CHANGELOG.md > release_notes.md
+
+          if [ ! -s release_notes.md ]; then
+            echo "::warning::No CHANGELOG entry found for v$VERSION — using fallback."
+            echo "Release v$VERSION" > release_notes.md
+            echo "" >> release_notes.md
+            echo "See [CHANGELOG.md](CHANGELOG.md) for details." >> release_notes.md
+          fi
+
+          echo "--- Release notes preview ---"
+          cat release_notes.md
+          echo "--- end ---"
+
+      - name: Detect pre-release
+        if: steps.version.outputs.is_release == 'true'
+        id: prerelease
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          if [[ "$TAG" =~ -(beta|rc|alpha|pre) ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            echo "Tag $TAG → marked as pre-release"
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+            echo "Tag $TAG → standard release"
+          fi
+
+      - name: Create GitHub Release
+        if: steps.version.outputs.is_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          body_path: release_notes.md
+          prerelease: ${{ steps.prerelease.outputs.is_prerelease == 'true' }}
+          files: |
+            ./build/firmware-${{ steps.version.outputs.version }}.bin
+            ./build/partitions-${{ steps.version.outputs.version }}.bin
+            ./build/bootloader-${{ steps.version.outputs.version }}.bin
