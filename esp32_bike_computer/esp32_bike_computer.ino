@@ -586,10 +586,10 @@ void drawStatusBar() {
 void drawErrorOverlay() {
   if (!gErrors.hasActive()) return;
   ErrorCode ec=gErrors.firstActive();
-  gfx->fillRect(0,30,TFT_WIDTH,50,0xA000);
+  gfx->fillRect(0,42,TFT_WIDTH,46,0xA000);
   gfx->setTextColor(CLR_WHITE); gfx->setTextSize(1);
-  gfx->setCursor(10,40); gfx->print("! ERROR:");
-  gfx->setCursor(10,54); gfx->print(ERR_NAMES[ec]);
+  gfx->setCursor(10,50); gfx->print("! ERROR:");
+  gfx->setCursor(10,64); gfx->print(ERR_NAMES[ec]);
 }
 
 // ── Screen 1: RIDING DATA ─────────────────────────────────────
@@ -999,7 +999,7 @@ void setup() {
   // Currently no files are written by firmware; reserved for GPX track export
   // and crash logs in upcoming versions.
   DBG("INIT: LittleFS...");
-  if (!LittleFS.begin(true)) {  // true = format if mount fails
+  if (!LittleFS.begin(true, "/littlefs", 10, "littlefs")) {  // label must match partitions.csv
     DBG("[WARN] LittleFS mount failed — FS unavailable");
     gErrors.set(ERR_FS, SEV_WARN);
   } else {
