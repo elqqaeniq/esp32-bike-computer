@@ -511,84 +511,74 @@ void updateAstronomy(uint32_t now) {
 uint8_t gMapMode=0; // 0=auto,1=zoom,2=pan-h,3=pan-v
 float   gMapOffX=0,gMapOffY=0,gMapScale=1.0f;
 
+// Status bar occupies y=16..40. At y=24 (text row) the round display
+// clips to x≈90..270 (180px wide). All elements are positioned within
+// that range. Old layout (y=0..22, x=4..354) was mostly outside the circle.
 void drawStatusBar() {
-  uint16_t bg  = PAL565[gTheme.bg_statusbar];
-  uint16_t fg  = statusbarTextColor();
-  gfx->fillRect(0,0,TFT_WIDTH,22,bg);
+  uint16_t bg = PAL565[gTheme.bg_statusbar];
+  uint16_t fg = statusbarTextColor();
+  gfx->fillRect(0, 16, TFT_WIDTH, 24, bg);  // arc visible at y=16..40
   gfx->setTextSize(1); gfx->setTextColor(fg);
 
-  // Time (GPS)
+  // Time + Date  x=90..155
   if (gGpsFixed && gps.time.isValid()) {
-    int h=gps.time.hour(), m=gps.time.minute();
-    float utcOff=gTimeSett.utcHalfHours*0.5f;
-    h=(int)(h+utcOff+24)%24;
-    char t[6]; snprintf(t,6,"%02d:%02d",h,m);
-    gfx->setCursor(4,7); gfx->print(t);
-    // Date
-    static const char* DOW[]={"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
-    // simple DOW from TinyGPS (not available directly — use stored)
-    char d[12]; snprintf(d,12,"%02d-%02d",gps.date.day(),gps.date.month());
-    gfx->setCursor(50,7); gfx->print(d);
+    int h = gps.time.hour(), m = gps.time.minute();
+    h = (int)(h + gTimeSett.utcHalfHours*0.5f + 24) % 24;
+    char buf[12];
+    snprintf(buf, 12, "%02d:%02d", h, m);
+    gfx->setCursor(90, 24); gfx->print(buf);
+    snprintf(buf, 12, "%02d-%02d", gps.date.day(), gps.date.month());
+    gfx->setCursor(126, 24); gfx->print(buf);
   }
 
-  // Turn indicators (blink 2Hz)
-  bool blinkOn=((millis()/500)%2==0);
-  uint8_t tx=115;
+  // Turn indicator  x=160  (blink 2Hz)
+  bool blinkOn = ((millis()/500)%2==0);
   if (blinkOn) {
     switch(gLED.turnState) {
-      case TS_LEFT:     gfx->setTextColor(CLR_ORANGE); gfx->setCursor(tx,7); gfx->print('<'); break;
-      case TS_RIGHT:    gfx->setTextColor(CLR_ORANGE); gfx->setCursor(tx,7); gfx->print('>'); break;
-      case TS_HAZARD:   gfx->setTextColor(CLR_ORANGE); gfx->setCursor(tx,7); gfx->print("><"); break;
-      case TS_THANKYOU: gfx->setTextColor(CLR_ORANGE); gfx->setCursor(tx,7); gfx->print("TY"); break;
+      case TS_LEFT:     gfx->setTextColor(CLR_ORANGE); gfx->setCursor(160,24); gfx->print('<');   break;
+      case TS_RIGHT:    gfx->setTextColor(CLR_ORANGE); gfx->setCursor(160,24); gfx->print('>');   break;
+      case TS_HAZARD:   gfx->setTextColor(CLR_ORANGE); gfx->setCursor(160,24); gfx->print("><");  break;
+      case TS_THANKYOU: gfx->setTextColor(CLR_ORANGE); gfx->setCursor(160,24); gfx->print("TY"); break;
       default: break;
     }
   }
 
-  // Brake
+  // Brake  x=173
   if (gIMUSnapshot.isBraking) {
-    gfx->setTextColor(CLR_RED); gfx->setCursor(133,7); gfx->print("BR");
+    gfx->setTextColor(CLR_RED); gfx->setCursor(173, 24); gfx->print("BR");
   }
 
-  // HR
-  if (gHeartRateBpm>0) {
-    gfx->setTextColor(CLR_PINK); gfx->setCursor(150,7);
-    gfx->printf("%dbpm",gHeartRateBpm);
-  }
-
-  // GPS fix
-  gfx->setCursor(200,7);
-  gfx->setTextColor(gGpsFixed?CLR_GPS_OK:CLR_GPS_ERR);
-  gfx->print(gGpsFixed?"FIX":"!FIX");
+  // GPS fix + sat count  x=181..220
+  gfx->setTextColor(gGpsFixed ? CLR_GPS_OK : CLR_GPS_ERR);
+  gfx->setCursor(181, 24); gfx->print(gGpsFixed ? "FIX" : "!FIX");
   if (gGpsFixed) {
-    gfx->setTextColor(CLR_YELLOW); gfx->setCursor(225,7);
+    gfx->setTextColor(CLR_YELLOW); gfx->setCursor(208, 24);
     gfx->print(gSatCount);
   }
 
-  // BLE (NRF disabled) — show Garmin HR status
-  gfx->setCursor(238,7);
-  gfx->setTextColor(gBLE.hrConnected()?CLR_BLUE:CLR_GRAY);
-  gfx->print(gBLE.hrConnected()?"HR":"  ");
-
-  // Battery
-  uint8_t bpct=(uint8_t)gBattPct;
-  uint16_t bclr=battColor565(bpct);
-  gfx->setTextColor(bclr);
-  gfx->setCursor(255,7);
-  gfx->printf("%d%%",bpct);
-
-  // Error dot
-  if (gErrors.hasActive()) {
-    gfx->fillCircle(TFT_WIDTH-6,6,4,CLR_RED);
+  // HR bpm (if connected)  x=222
+  if (gHeartRateBpm > 0) {
+    gfx->setTextColor(CLR_PINK); gfx->setCursor(222, 24);
+    gfx->printf("%db", gHeartRateBpm);
   }
 
-  // Settings page name at bottom of status ring
+  // Battery  x=246
+  gfx->setTextColor(battColor565((uint8_t)gBattPct));
+  gfx->setCursor(246, 24);
+  gfx->printf("%d%%", (uint8_t)gBattPct);
+
+  // Error dot  x=266 — inside the visible arc (max x≈270 at y=28)
+  if (gErrors.hasActive()) {
+    gfx->fillCircle(266, 28, 3, CLR_RED);
+  }
+
+  // Settings page name at bottom (y=346, visible x≈110..250 on round display)
   if (gInSettings) {
+    const char *pn = SETT_NAMES[gSett.screen];
+    int16_t px = (TFT_WIDTH - (int16_t)strlen(pn)*6) / 2;
+    gfx->fillRect(0, TFT_HEIGHT-18, TFT_WIDTH, 18, bg);
     gfx->setTextColor(fg); gfx->setTextSize(1);
-    const char *pn=SETT_NAMES[gSett.screen];
-    int16_t px=(TFT_WIDTH-strlen(pn)*6)/2;
-    gfx->setCursor(px,TFT_HEIGHT-14);
-    gfx->fillRect(0,TFT_HEIGHT-18,TFT_WIDTH,18,bg);
-    gfx->print(pn);
+    gfx->setCursor(px, TFT_HEIGHT-14); gfx->print(pn);
   }
 }
 
@@ -605,7 +595,7 @@ void drawErrorOverlay() {
 // ── Screen 1: RIDING DATA ─────────────────────────────────────
 void drawScreenRiding() {
   uint16_t bg=PAL565[gTheme.bg_screen];
-  gfx->fillRect(0,22,TFT_WIDTH,TFT_HEIGHT-22,bg);
+  gfx->fillRect(0,40,TFT_WIDTH,TFT_HEIGHT-40,bg);
 
   // Big speed
   char buf[16];
@@ -655,7 +645,7 @@ void drawScreenRiding() {
 // ── Screen 2: GPS MAP ─────────────────────────────────────────
 void drawScreenMap() {
   uint16_t bg=PAL565[gTheme.bg_screen];
-  gfx->fillRect(0,22,TFT_WIDTH,TFT_HEIGHT-22,bg);
+  gfx->fillRect(0,40,TFT_WIDTH,TFT_HEIGHT-40,bg);
 
   if (gTrackLen < 2) {
     gfx->setTextColor(CLR_GRAY); gfx->setTextSize(2);
@@ -708,32 +698,38 @@ void drawScreenMap() {
   if (scale>25) scaleBarM=10000;
   if (scale<1)  scaleBarM=500;
   if (scale<0.5f) scaleBarM=200;
-  int16_t barPx=(int16_t)(scaleBarM/scale);
-  uint16_t sclr=PAL565[gTheme.scale_bar];
-  gfx->drawFastHLine(10,TFT_HEIGHT-18,barPx,sclr);
-  gfx->drawFastVLine(10,TFT_HEIGHT-22,8,sclr);
-  gfx->drawFastVLine(10+barPx,TFT_HEIGHT-22,8,sclr);
+  // Scale bar — centered horizontally so it stays within the round display
+  // At y=TFT_HEIGHT-30 (y=330) visible x≈70..290, giving ~220px of room.
+  int16_t barPx = (int16_t)(scaleBarM/scale);
+  if (barPx > 200) barPx = 200;
+  int16_t barX = (TFT_WIDTH - barPx) / 2;
+  const int16_t barY = TFT_HEIGHT - 30;
+  uint16_t sclr = PAL565[gTheme.scale_bar];
+  gfx->drawFastHLine(barX, barY, barPx, sclr);
+  gfx->drawFastVLine(barX, barY-4, 8, sclr);
+  gfx->drawFastVLine(barX+barPx, barY-4, 8, sclr);
   gfx->setTextColor(sclr); gfx->setTextSize(1);
   char scBuf[12];
   if (scaleBarM>=1000) snprintf(scBuf,12,"%.0f km",scaleBarM/1000);
   else                  snprintf(scBuf,12,"%.0f m",scaleBarM);
-  gfx->setCursor(12,TFT_HEIGHT-12); gfx->print(scBuf);
+  int16_t labX = barX + (barPx - (int16_t)strlen(scBuf)*6) / 2;
+  gfx->setCursor(labX, barY+6); gfx->print(scBuf);
 
-  // Mode indicator
+  // Mode indicator — moved to centre-top, inside the visible circle
   const char* modes[]={"","[+ -]","[<  >]","[^ v]"};
   if (gMapMode>0) {
     gfx->setTextColor(sclr); gfx->setTextSize(1);
-    gfx->setCursor(TFT_WIDTH-50,28); gfx->print(modes[gMapMode]);
+    gfx->setCursor(140, 50); gfx->print(modes[gMapMode]);
   }
 }
 
 // ── Screen 3: TERRAIN & BODY ──────────────────────────────────
 void drawScreenTerrain() {
   uint16_t bg=PAL565[gTheme.bg_screen];
-  gfx->fillRect(0,22,TFT_WIDTH,TFT_HEIGHT-22,bg);
+  gfx->fillRect(0,40,TFT_WIDTH,TFT_HEIGHT-40,bg);
 
   gfx->setTextSize(1);
-  uint8_t y=30;
+  uint8_t y=48;
   auto row=[&](const char* lbl,const char* val,uint16_t vc=CLR_WHITE){
     gfx->setTextColor(CLR_GRAY); gfx->setCursor(10,y); gfx->print(lbl);
     gfx->setTextColor(vc);       gfx->setCursor(170,y); gfx->print(val);
@@ -789,11 +785,11 @@ void drawScreenTerrain() {
 // ── Settings renderer ──────────────────────────────────────────
 void drawSettings() {
   uint16_t bg=PAL565[gTheme.bg_screen];
-  gfx->fillRect(0,22,TFT_WIDTH,TFT_HEIGHT-40,bg);
+  gfx->fillRect(0,40,TFT_WIDTH,TFT_HEIGHT-58,bg);
   updateBlink(gSett);
 
   gfx->setTextSize(1); gfx->setTextColor(CLR_CYAN);
-  gfx->setCursor(8,28);
+  gfx->setCursor(100,46);
   gfx->printf("%s %d/%d", SETT_NAMES[gSett.screen],
     (int)gSett.screen+1, SETT_COUNT);
 
@@ -1139,15 +1135,17 @@ void loop() {
     }
   }
 
-  // Display update — separate throttling for status bar and main area
-  if (gDisplayDirty || now-gLastSbarMs>=SBAR_UPD_MS) {
+  // Display update — one TE sync covers both status bar and main area
+  bool _needSbar = gDisplayDirty || now-gLastSbarMs>=SBAR_UPD_MS;
+  bool _needMain = gDisplayDirty || now-gLastDrawMs>=DISP_UPD_MS;
+  if (_needSbar || _needMain) waitForTE();
+  if (_needSbar) {
     gLastSbarMs=now;
     drawStatusBar();
   }
-  if (gDisplayDirty || now-gLastDrawMs>=DISP_UPD_MS) {
+  if (_needMain) {
     gDisplayDirty=false;
     gLastDrawMs=now;
-    waitForTE();
     if (gInSettings) {
       drawSettings();
     } else {
