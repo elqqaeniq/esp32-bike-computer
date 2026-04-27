@@ -34,7 +34,7 @@
 #define PIN_TFT_TE    39        // Tearing-effect input (ISR-driven FPS counter, v1.1.2)
 #define TFT_WIDTH     360
 #define TFT_HEIGHT    360
-#define TFT_SPI_FREQ  20000000UL  // 20MHz for prototype wiring; restore to 40MHz on final PCB
+#define TFT_SPI_FREQ  40000000UL  // QSPI 40MHz; reduces tearing (13ms/frame vs 26ms at 20MHz)
 #define TFT_ROTATION  0
 #define BL_LEDC_FREQ  5000
 #define BL_LEDC_RES   8
