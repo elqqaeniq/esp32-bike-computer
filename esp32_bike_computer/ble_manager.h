@@ -96,8 +96,14 @@ public:
     if (_scanCB.foundHR && !_hrConnected) {
       _connectHR();
     }
-    // Reconnect if disconnected
-    if (!_hrConnected && !_scanning && (now - _hrDisconnectMs > 5000)) {
+    // Rescan requested by onDisconnect callback (never call BLE API from callback)
+    if (_rescanPending && !_scanning) {
+      _rescanPending = false;
+      DBG("BLE: HR reconnect scan (deferred)");
+      startScan();
+    }
+    // Reconnect if disconnected and no rescan scheduled
+    if (!_hrConnected && !_scanning && !_rescanPending && (now - _hrDisconnectMs > 5000)) {
       DBG("BLE: HR reconnect scan");
       startScan();
     }
@@ -143,11 +149,12 @@ private:
   bool         _scanning   = false;
 
   // HR (Garmin)
-  BLEClient*               _hrClient    = nullptr;
-  BLERemoteCharacteristic* _hrChar      = nullptr;
-  bool                     _hrConnected = false;
-  uint32_t                 _hrDisconnectMs = 0;
-  uint32_t                 _hrLastDataMs   = 0;
+  BLEClient*               _hrClient       = nullptr;
+  BLERemoteCharacteristic* _hrChar         = nullptr;
+  volatile bool            _hrConnected    = false;
+  volatile bool            _rescanPending  = false;  // set by onDisconnect, consumed by tick()
+  volatile uint32_t        _hrDisconnectMs = 0;
+  volatile uint32_t        _hrLastDataMs   = 0;
 
   // ── NRF (ALL COMMENTED OUT) ────────────────────────────────
   // BLEClient*               _nrfClient    = nullptr;
@@ -206,7 +213,7 @@ inline void HRClientCallbacks::onDisconnect(BLEClient*) {
   gBLE._hrConnected    = false;
   gBLE._hrDisconnectMs = millis();
   gHeartRateBpm        = 0;
+  gBLE._rescanPending  = true;  // tick() will call startScan() — never call BLE API from callback
   DBG("BLE: HR disconnected");
   checkModuleBLEHR(false);
-  gBLE.startScan();
 }
