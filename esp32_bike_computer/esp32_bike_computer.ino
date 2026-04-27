@@ -135,14 +135,23 @@ volatile bool gCalibRequested = false;
 // ST77916 pulses TE pin once per internal frame refresh (~60 Hz).
 // We count pulses here for a real-time FPS metric — useful for tuning
 // QSPI clock and validating partial-redraw work in v1.2.
-// Full integration (sync gfx writes to TE) deferred to v1.2.
 volatile uint32_t gTeTickCount = 0;
+volatile bool     gTEReady = false;
 uint32_t gTeFpsLastMs = 0;
 uint32_t gTeFpsLastCount = 0;
 uint8_t  gDisplayFps = 0;
 
 void IRAM_ATTR teISR() {
   gTeTickCount += 1;
+  gTEReady = true;
+}
+
+// Block until the next TE pulse (display scan complete), then draw immediately.
+// Timeout 25ms prevents lockup if TE pin is unwired.
+static void waitForTE() {
+  gTEReady = false;
+  uint32_t t = millis();
+  while (!gTEReady && millis() - t < 25) {}
 }
 
 // =============================================================
@@ -1138,6 +1147,7 @@ void loop() {
   if (gDisplayDirty || now-gLastDrawMs>=DISP_UPD_MS) {
     gDisplayDirty=false;
     gLastDrawMs=now;
+    waitForTE();
     if (gInSettings) {
       drawSettings();
     } else {
