@@ -511,74 +511,106 @@ void updateAstronomy(uint32_t now) {
 uint8_t gMapMode=0; // 0=auto,1=zoom,2=pan-h,3=pan-v
 float   gMapOffX=0,gMapOffY=0,gMapScale=1.0f;
 
-// Status bar occupies y=16..40. At y=24 (text row) the round display
-// clips to x≈90..270 (180px wide). All elements are positioned within
-// that range. Old layout (y=0..22, x=4..354) was mostly outside the circle.
-void drawStatusBar() {
-  uint16_t bg = PAL565[gTheme.bg_statusbar];
-  uint16_t fg = statusbarTextColor();
-  gfx->fillRect(0, 16, TFT_WIDTH, 24, bg);  // arc visible at y=16..40
-  gfx->setTextSize(1); gfx->setTextColor(fg);
+// ── Arc bezel status bar ───────────────────────────────────────
+// Full white ring at r=152..178. Top arc (285°/315°/0°/40°/75°):
+// Turn, Brake, Error-dot, HR, Battery. Bottom arc (140°/165°/195°/220°):
+// Time, Date, GPS, Sat. In settings menu: page name at 180° instead.
+// Angles: 0° = 12-o'clock, clockwise. Bottom half rotated 180° so text
+// stays readable right-side-up when viewed straight-on.
+static const int16_t ARC_CX    = 180;
+static const int16_t ARC_CY    = 180;
+static const int16_t ARC_R_OUT = 178;
+static const int16_t ARC_R_IN  = 152;
+static const int16_t ARC_R_MID = 165;
+static const int16_t ARC_CVS_W = 60;
+static const int16_t ARC_CVS_H = 12;
 
-  // Time + Date  x=90..155
-  if (gGpsFixed && gps.time.isValid()) {
-    int h = gps.time.hour(), m = gps.time.minute();
-    h = (int)(h + gTimeSett.utcHalfHours*0.5f + 24) % 24;
-    char buf[12];
-    snprintf(buf, 12, "%02d:%02d", h, m);
-    gfx->setCursor(90, 24); gfx->print(buf);
-    snprintf(buf, 12, "%02d-%02d", gps.date.day(), gps.date.month());
-    gfx->setCursor(126, 24); gfx->print(buf);
-  }
+static Arduino_Canvas* sArcCanvas = nullptr;
 
-  // Turn indicator  x=160  (blink 2Hz)
-  bool blinkOn = ((millis()/500)%2==0);
-  if (blinkOn) {
-    switch(gLED.turnState) {
-      case TS_LEFT:     gfx->setTextColor(CLR_ORANGE); gfx->setCursor(160,24); gfx->print('<');   break;
-      case TS_RIGHT:    gfx->setTextColor(CLR_ORANGE); gfx->setCursor(160,24); gfx->print('>');   break;
-      case TS_HAZARD:   gfx->setTextColor(CLR_ORANGE); gfx->setCursor(160,24); gfx->print("><");  break;
-      case TS_THANKYOU: gfx->setTextColor(CLR_ORANGE); gfx->setCursor(160,24); gfx->print("TY"); break;
-      default: break;
+static void drawArcLabel(const char* str, float angleDeg, uint16_t color) {
+  if (!str || !str[0] || !sArcCanvas) return;
+
+  sArcCanvas->fillScreen(CLR_WHITE);
+  sArcCanvas->setTextColor(color, CLR_WHITE);
+  sArcCanvas->setTextSize(1);
+  sArcCanvas->setCursor(0, 2);
+  sArcCanvas->print(str);
+  uint16_t* fb = sArcCanvas->getFramebuffer();
+
+  float mathRad = (angleDeg - 90.0f) * DEG_TO_RAD;
+  int16_t lx = ARC_CX + (int16_t)(ARC_R_MID * cosf(mathRad) + 0.5f);
+  int16_t ly = ARC_CY + (int16_t)(ARC_R_MID * sinf(mathRad) + 0.5f);
+
+  // bottom half flipped so text reads right-side-up from the front
+  float rotDeg = (angleDeg > 90.0f && angleDeg < 270.0f) ? angleDeg - 180.0f : angleDeg;
+  float rotRad = rotDeg * DEG_TO_RAD;
+  float ca = cosf(rotRad), sa = sinf(rotRad);
+
+  gfx->startWrite();
+  for (int16_t iy = 0; iy < ARC_CVS_H; iy++) {
+    for (int16_t ix = 0; ix < ARC_CVS_W; ix++) {
+      uint16_t c = fb[iy * ARC_CVS_W + ix];
+      if (c == CLR_WHITE) continue;
+      float dx = ix - ARC_CVS_W * 0.5f;
+      float dy = iy - ARC_CVS_H * 0.5f;
+      int16_t sx = lx + (int16_t)(dx * ca - dy * sa + 0.5f);
+      int16_t sy = ly + (int16_t)(dx * sa + dy * ca + 0.5f);
+      if (sx >= 0 && sx < TFT_WIDTH && sy >= 0 && sy < TFT_HEIGHT)
+        gfx->writePixel(sx, sy, c);
     }
   }
+  gfx->endWrite();
+}
 
-  // Brake  x=173
-  if (gIMUSnapshot.isBraking) {
-    gfx->setTextColor(CLR_RED); gfx->setCursor(173, 24); gfx->print("BR");
+void drawStatusBar() {
+  if (!sArcCanvas) {
+    sArcCanvas = new Arduino_Canvas(ARC_CVS_W, ARC_CVS_H, nullptr);
+    sArcCanvas->begin();
   }
 
-  // GPS fix + sat count  x=181..220
-  gfx->setTextColor(gGpsFixed ? CLR_GPS_OK : CLR_GPS_ERR);
-  gfx->setCursor(181, 24); gfx->print(gGpsFixed ? "FIX" : "!FIX");
-  if (gGpsFixed) {
-    gfx->setTextColor(CLR_YELLOW); gfx->setCursor(208, 24);
-    gfx->print(gSatCount);
-  }
+  gfx->fillArc(ARC_CX, ARC_CY, ARC_R_IN, ARC_R_OUT, 0, 360, CLR_WHITE);
 
-  // HR bpm (if connected)  x=222
+  bool blinkOn = (millis() / 500) % 2;
+
+  // ── Top arc ─────────────────────────────────────────────────
+  if (blinkOn && gLED.turnState != TS_IDLE) {
+    const char* sym = gLED.turnState == TS_LEFT   ? "<"  :
+                      gLED.turnState == TS_RIGHT  ? ">"  :
+                      gLED.turnState == TS_HAZARD ? "><" : "TY";
+    drawArcLabel(sym, 285.0f, CLR_ORANGE);
+  }
+  if (gIMUSnapshot.isBraking)
+    drawArcLabel("BR", 315.0f, CLR_RED);
+  if (gErrors.hasActive())
+    gfx->fillCircle(ARC_CX, ARC_CY - ARC_R_MID, 3, CLR_RED);
   if (gHeartRateBpm > 0) {
-    gfx->setTextColor(CLR_PINK); gfx->setCursor(222, 24);
-    gfx->printf("%db", gHeartRateBpm);
+    char buf[6]; snprintf(buf, 6, "%ub", (uint16_t)gHeartRateBpm);
+    drawArcLabel(buf, 40.0f, CLR_PINK);
+  }
+  {
+    char buf[6]; snprintf(buf, 6, "%u%%", (uint8_t)gBattPct);
+    drawArcLabel(buf, 75.0f, battColor565((uint8_t)gBattPct));
   }
 
-  // Battery  x=246
-  gfx->setTextColor(battColor565((uint8_t)gBattPct));
-  gfx->setCursor(246, 24);
-  gfx->printf("%d%%", (uint8_t)gBattPct);
-
-  // Error dot  x=266 — inside the visible arc (max x≈270 at y=28)
-  if (gErrors.hasActive()) {
-    gfx->fillCircle(266, 28, 3, CLR_RED);
-  }
-
-  // Settings page name at bottom (y=346, visible x≈110..250 on round display)
+  // ── Bottom arc ───────────────────────────────────────────────
   if (gInSettings) {
-    const char *pn = SETT_NAMES[gSett.screen];
-    int16_t px = (TFT_WIDTH - (int16_t)strlen(pn)*6) / 2;
-    gfx->fillRect(0, TFT_HEIGHT-18, TFT_WIDTH, 18, bg);
-    gfx->setTextColor(fg); gfx->setTextSize(1);
-    gfx->setCursor(px, TFT_HEIGHT-14); gfx->print(pn);
+    drawArcLabel(SETT_NAMES[gSett.screen], 180.0f, CLR_BLACK);
+  } else {
+    if (gGpsFixed && gps.time.isValid()) {
+      int h = (int)(gps.time.hour() + gTimeSett.utcHalfHours * 0.5f + 24) % 24;
+      char buf[8]; snprintf(buf, 8, "%02d:%02d", h, gps.time.minute());
+      drawArcLabel(buf, 140.0f, CLR_BLACK);
+    }
+    if (gGpsFixed && gps.date.isValid()) {
+      char buf[8]; snprintf(buf, 8, "%02d-%02d", gps.date.day(), gps.date.month());
+      drawArcLabel(buf, 165.0f, CLR_BLACK);
+    }
+    drawArcLabel(gGpsFixed ? "FIX" : "!FIX", 195.0f,
+                 gGpsFixed ? CLR_GPS_OK : CLR_GPS_ERR);
+    if (gGpsFixed) {
+      char buf[4]; snprintf(buf, 4, "%d", gSatCount);
+      drawArcLabel(buf, 220.0f, CLR_BLACK);
+    }
   }
 }
 
@@ -1135,17 +1167,15 @@ void loop() {
     }
   }
 
-  // Display update — one TE sync covers both status bar and main area
+  // Display update — one TE sync covers both status bar and main area.
+  // Arc bezel overlaps corners of fillRect — always redraw it after content.
   bool _needSbar = gDisplayDirty || now-gLastSbarMs>=SBAR_UPD_MS;
   bool _needMain = gDisplayDirty || now-gLastDrawMs>=DISP_UPD_MS;
   if (_needSbar || _needMain) waitForTE();
-  if (_needSbar) {
-    gLastSbarMs=now;
-    drawStatusBar();
-  }
   if (_needMain) {
     gDisplayDirty=false;
     gLastDrawMs=now;
+    gLastSbarMs=now;  // arc redrawn below — reset timer
     if (gInSettings) {
       drawSettings();
     } else {
@@ -1156,5 +1186,9 @@ void loop() {
       }
     }
     drawErrorOverlay();
+    drawStatusBar();  // after content: ring covers fillRect corners
+  } else if (_needSbar) {
+    gLastSbarMs=now;
+    drawStatusBar();
   }
 }
