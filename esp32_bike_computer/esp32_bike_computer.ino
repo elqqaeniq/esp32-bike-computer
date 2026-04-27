@@ -113,7 +113,7 @@ Arduino_DataBus *tftBus = new Arduino_ESP32QSPI(
 // ST77916 driver — module ver:tft 1.53 uses 150-init (not default 180-init).
 // ips=true for IPS color inversion; flip to false if colors appear inverted.
 Arduino_GFX *gfx = new Arduino_ST77916(
-  tftBus, PIN_TFT_RST, TFT_ROTATION, true,
+  tftBus, PIN_TFT_RST, TFT_ROTATION, false,
   ST77916_TFTWIDTH, ST77916_TFTHEIGHT, 0, 0, 0, 0,
   st77916_150_init_operations, sizeof(st77916_150_init_operations));
 
