@@ -108,10 +108,46 @@ public:
     return ERR_NONE;
   }
 
+  // Consume dirty flag (for display redraw)
   bool dirty() {
     bool d = _dirty;
     _dirty = false;
     return d;
+  }
+
+  // Serial dump — for diagnostics
+  void printAll() const {
+    Serial.println("=== ERROR STATUS ===");
+    bool any = false;
+    for (uint8_t i=0; i<MAX_ERRORS; i++) {
+      if (_e[i].active) {
+        Serial.printf("  [%s] count=%u age=%lums\n",
+          ERR_NAMES[_e[i].code], _e[i].count,
+          millis()-_e[i].firstMs);
+        any = true;
+      }
+    }
+    if (!any) Serial.println("  All systems OK");
+    Serial.println("====================");
+  }
+
+  // Returns JSON string for OTA captive portal /errors endpoint
+  String toJSON() const {
+    String j = "[";
+    bool first = true;
+    for (uint8_t i=0; i<MAX_ERRORS; i++) {
+      if (_e[i].active) {
+        if (!first) j += ",";
+        j += "{\"code\":" + String(_e[i].code)
+           + ",\"msg\":\"" + ERR_NAMES[_e[i].code]
+           + "\",\"count\":" + String(_e[i].count)
+           + ",\"age\":" + String((millis()-_e[i].firstMs)/1000)
+           + "}";
+        first = false;
+      }
+    }
+    j += "]";
+    return j;
   }
 
   const ErrorEntry* entries() const { return _e; }
@@ -130,6 +166,23 @@ private:
 // === Module-specific helpers (called from module code) =======
 extern ErrorHandler gErrors;
 
+inline void checkModulePSRAM() {
+  if (psramFound()) {
+    Serial.printf("[INIT] PSRAM: %.1f MB available\n",
+                  ESP.getFreePsram()/1048576.0f);
+  } else {
+    Serial.println("[INIT] PSRAM: NOT FOUND — track buffer will use heap");
+    gErrors.set(ERR_PSRAM, SEV_WARN);
+  }
+}
+
+inline void checkModuleGPS(bool hasData) {
+  if (hasData) gErrors.clear(ERR_GPS);
+  else         gErrors.set(ERR_GPS, SEV_WARN);
+}
+
+// v1.1.4: simplified — no Serial.println in hot path.
+// Verbose logging moved to BLEManager::tick() which calls this.
 inline void checkModuleBLEHR(bool ok) {
   if (ok) gErrors.clear(ERR_BLE_HR);
   else    gErrors.set(ERR_BLE_HR, SEV_WARN);

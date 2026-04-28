@@ -9,6 +9,10 @@
 #define FW_BUILD_DATE __DATE__ " " __TIME__
 #define DEVICE_NAME   "ESP32-BikeMain"
 
+// --- Serial ---
+#define SERIAL_BAUD   115200
+#define DBG(fmt,...) Serial.printf("[%lu] " fmt "\n", millis(), ##__VA_ARGS__)
+
 // --- Display ST77916 (QSPI 4-line) ---
 // Module pinout: TE BL CS RST IO3 IO2 IO1 SDA SCL VCC GND
 //
@@ -88,18 +92,25 @@
 // --- Button inputs (external touch-button modules) ---
 // External modules output HIGH when pressed, LOW when idle.
 // No pull-up/pull-down needed on ESP — module handles it.
-#define PIN_BTN1   1   // LEFT turn
-#define PIN_BTN2   2   // RIGHT turn
-#define PIN_BTN3   3   // THANK YOU / HAZARD long
-#define BTN_LONG_MS 1500
+#define PIN_BTN1      1       // LEFT turn
+#define PIN_BTN2      2       // RIGHT turn
+#define PIN_BTN3      3       // THANK YOU / HAZARD long
+#define BTN_DEB_MS    80
+#define BTN_LONG_MS   3000
 
 // --- Battery ADC ---
+// Divider: Vbat ─[R1=200k]─┬─[R2=100k]─GND   →  ADC = Vbat / 3
+//                          │
+//                          ├─[1kΩ]── PIN_VBAT (GPIO7)
+//                          └─[100nF]─GND
+// At Vbat=4.2V: ADC=1.40V (linear range, accurate)
+// At Vbat=3.0V: ADC=1.00V
+// VBAT_RATIO = (R1+R2)/R2 = 300/100 = 3.0
 #define PIN_VBAT      7
 #define VBAT_RATIO    3.0f       // 200k+100k divider (v1.1.0 fix)
-#define VBAT_MIN      3.30f
-#define VBAT_MAX      4.20f
-#define VBAT_SAMPLES  10
-#define VBAT_INTERVAL_MS 5000
+#define VBAT_FULL     4.20f
+#define VBAT_EMPTY    3.00f
+#define VBAT_SAMPLES  8
 
 // --- BLE Garmin HR ---
 #define BLE_HR_NAME   "Forerunner"   // matches Forerunner 255s, 245, etc
@@ -107,33 +118,63 @@
 #define BLE_HR_CHAR   "00002a37-0000-1000-8000-00805f9b34fb"
 
 // --- BLE NRF (DISABLED) ---
-// #define BLE_NRF_NAME  "BikeRear-NRF"
-// #define BLE_NRF_SVC   "..."
-// #define BLE_NRF_LED   "..."
-// #define BLE_NRF_BRAKE "..."
-// #define BLE_NRF_CAD   "..."
-// #define BLE_NRF_BATT  "..."
+// #define BLE_NRF_NAME       "BikeRearUnit"
+// #define BLE_NRF_SVC        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+// #define BLE_CAD_CHAR       "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+// #define BLE_LED_CHAR       "beb5483e-36e1-4688-b7f5-ea07361b26a9"
+// #define BLE_BRK_CHAR       "beb5483e-36e1-4688-b7f5-ea07361b26aa"
+// #define BLE_NRFBAT_CHAR    "beb5483e-36e1-4688-b7f5-ea07361b26ab"
+// #define LED_CMD_IDLE       0x00
+// #define LED_CMD_LEFT       0x01
+// #define LED_CMD_RIGHT      0x02
+// #define LED_CMD_THANKYOU   0x03
+// #define LED_CMD_HAZARD     0x04
 
 // --- BLE_DEBUG: extra DBG output in HR notify callback ---
 // Comment out for release. Adds stack/heap watch in BLE task context.
 // #define BLE_DEBUG 1
 
-// --- OTA WiFi AP ---
-#define OTA_SSID      "ESP32-Bike-OTA"
-#define OTA_PASS      ""             // open AP for first setup
-#define OTA_AP_IP     "192.168.4.1"
-#define OTA_TIMEOUT_MS 600000UL      // 10 min idle → auto-stop
+// --- Preferences NVS keys ---
+#define PREF_BIKE     "bike"
+#define PREF_THEME    "theme"
+#define PREF_SETT     "settings"
+#define PREF_TOTAL    "total_km"
+#define PREF_CAL_AX   "cal_ax"
+#define PREF_CAL_AY   "cal_ay"
+#define PREF_CAL_AZ   "cal_az"
+// Odometer save policy (NVS wear leveling):
+//   ODOM_SAVE_KM    — minimum kilometers between periodic saves while riding.
+//   Periodic save:  every ODOM_SAVE_KM (1.0km in v1.1.2, was 0.1km).
+//   Forced save:    on settings menu open, OTA start, OTA flash final.
+//   Rationale: 100k cycle/page NVS limit. With 0.1km step, 10 000km of riding
+//   = 100k writes to the same key — at the wear limit. 1.0km gives 10x margin.
+//   Trade-off: max ~1km lost on power-loss between saves (vs 100m before).
+#define ODOM_SAVE_KM  1.0f
+
+// --- Screens ---
+#define SCR_RIDING    0
+#define SCR_MAP       1
+#define SCR_TERRAIN   2
+#define SCR_COUNT     3
 
 // --- Display update intervals ---
-#define DISP_UPD_MS    100   // main screen redraw
-#define SBAR_UPD_MS    500   // status bar redraw
+#define DISP_UPD_MS   400      // main screen redraw throttle
+#define SBAR_UPD_MS   1000     // status bar redraw throttle
 
-// --- Odometer NVS ---
-#define PREF_BIKE      "bike"
-#define PREF_TOTAL     "total_km"
-#define PREF_SETT      "settings"
-#define PREF_THEME     "theme"
-#define ODOM_SAVE_KM   1.0f
+// --- GPS track ---
+#define TRACK_MAX_PTS 2000
+#define TRACK_MIN_M   5.0f     // min distance between track points
+
+// --- OTA WiFi AP ---
+#define OTA_SSID      "BikeComp_OTA"
+#define OTA_PASS      "12345678"
+#define OTA_AP_IP     "192.168.4.1"
+#define OTA_TIMEOUT   300000UL   // 5 min idle → auto-stop
+
+// --- LED timing ---
+#define LED_ANIM_MS   120
+#define THANKYOU_MS   300
+#define SBAR_BLINK_HZ 2
 
 // =============================================================
 //  UI DESIGN TOKENS (v1.1.4)
