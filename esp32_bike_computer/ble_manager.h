@@ -1,7 +1,27 @@
 #pragma once
 // =============================================================
-//  BLE_MANAGER.H — BLE Central: Garmin HR only
+//  BLE_MANAGER.H v1.1.4 — BLE Central: Garmin HR only
 //  NRF52840 connection: ALL COMMENTED OUT
+//
+//  v1.1.4 CHANGES (BLE crash fix)
+//  ------------------------------
+//  Symptom: enabling Broadcast HR on Garmin → status bar / error
+//  panel started flashing → ESP rebooted within seconds.
+//
+//  Root cause hypothesis (to be confirmed by /crashes log):
+//    The HR notify callback runs in a NimBLE-internal task with
+//    a small stack (~4 KB). Calling checkModuleBLEHR(true) from
+//    the callback triggers gErrors.set/clear(), Serial.printf,
+//    potentially NVS — risk of stack overflow or watchdog.
+//
+//  Fix:
+//    1. _hrNotifyCB does only: parse + bump _hrLastDataMs.
+//       checkModuleBLEHR is invoked from tick() instead.
+//    2. Optional BLE_DEBUG: log stack/heap watermark on each
+//       callback so we can confirm the stack-overflow theory.
+//    3. gHeartRateBpm is now read via gHeartRateBpmSnap, refreshed
+//       once per loop in main task — eliminates display flicker
+//       from mid-frame value changes.
 // =============================================================
 #include <Arduino.h>
 #include <BLEDevice.h>
@@ -14,20 +34,30 @@
 
 // ── Shared state ──────────────────────────────────────────────
 volatile uint16_t gCadenceRpm   = 0;  // NRF cadence (commented)
-volatile uint16_t gHeartRateBpm = 0;  // Garmin HR
+volatile uint16_t gHeartRateBpm = 0;  // Garmin HR (raw, written by notify CB)
+uint16_t          gHeartRateBpmSnap = 0;  // Safe-to-read snapshot, refreshed in main loop
 volatile uint8_t  gNrfBattPct   = 0;  // NRF battery (commented)
 
-// ── HR parse ─────────────────────────────────────────────────
+// Refresh snapshot — call once per loop in main task.
+inline void refreshHRSnapshot() {
+  // 16-bit volatile load is atomic on Xtensa LX7
+  gHeartRateBpmSnap = gHeartRateBpm;
+}
+
+// ── HR parse (fast, called from BLE callback context) ────────
 // GATT Heart Rate Measurement (0x2A37):
-// Byte 0: flags (bit0=0 → HR is uint8, bit0=1 → uint16)
-// Byte 1: HR value (or bytes 1-2 if uint16)
-static void parseHRMeasurement(uint8_t* data, size_t len) {
-  if (len < 2) return;
-  bool is16bit = (data[0] & 0x01) != 0;
-  if (is16bit && len >= 3)
-    gHeartRateBpm = (uint16_t)data[1] | ((uint16_t)data[2] << 8);
-  else
-    gHeartRateBpm = data[1];
+//   Byte 0: flags (bit0=0 → uint8 HR, bit0=1 → uint16 HR)
+//   Byte 1+: HR value
+// Keep this minimal — no Serial, no allocations.
+static inline void parseHR_fast(uint8_t* d, size_t l) {
+  if (l < 2) return;
+  uint16_t hr;
+  if ((d[0] & 0x01) && l >= 3) {
+    hr = (uint16_t)d[1] | ((uint16_t)d[2] << 8);
+  } else {
+    hr = d[1];
+  }
+  gHeartRateBpm = hr;  // single 16-bit atomic store
 }
 
 // ── BLE Scan Callback ─────────────────────────────────────────
@@ -59,8 +89,6 @@ public:
 BLEUUID BLEScanCB::hrSvcUUID = BLEUUID(BLE_HR_SVC);
 
 // ── HR Client Callbacks (must be defined before BLEManager) ──
-// Forward-declared as a top-level class to avoid C++ restriction
-// on defining new types in a new-type-id expression.
 class HRClientCallbacks : public BLEClientCallbacks {
 public:
   void onConnect(BLEClient*) override { }
@@ -108,10 +136,25 @@ public:
       startScan();
     }
 
-    // Timeout HR data (sensor may be off)
-    if (_hrConnected && gHeartRateBpm > 0 && (now - _hrLastDataMs > 5000)) {
-      DBG("BLE: HR data timeout (5s)");
-      gHeartRateBpm = 0;
+    // v1.1.4: error-flag bookkeeping moved here (was in notify CB).
+    // Connected & data flowing → clear error.
+    // Connected but stale > 5s   → set error (HR sensor turned off / belt fell off).
+    if (_hrConnected) {
+      uint32_t age = now - _hrLastDataMs;
+      if (age < 5000) {
+        // fresh data flowing — make sure error is cleared
+        if (gErrors.isActive(ERR_BLE_HR)) checkModuleBLEHR(true);
+      } else {
+        // stale — drop reading and flag error
+        if (gHeartRateBpm > 0) {
+          DBG("BLE: HR data timeout (5s)");
+          gHeartRateBpm = 0;
+        }
+        if (!gErrors.isActive(ERR_BLE_HR)) checkModuleBLEHR(false);
+      }
+    } else {
+      // Not connected — ensure error reflects this
+      if (!gErrors.isActive(ERR_BLE_HR)) checkModuleBLEHR(false);
     }
 
     // ── NRF handling (ALL COMMENTED OUT) ───────────────────
@@ -123,6 +166,11 @@ public:
   bool hrConnected()  const { return _hrConnected; }
   // bool nrfConnected() const { return _nrfConnected; }  // NRF disabled
 
+  // For diagnostics: time since last HR notify (ms)
+  uint32_t hrDataAge() const {
+    return _hrLastDataMs == 0 ? UINT32_MAX : (millis() - _hrLastDataMs);
+  }
+
   // Stop BLE entirely — used before OTA AP start to free RAM
   // and avoid WiFi/BLE coexistence stress on ESP32-S3.
   void end() {
@@ -132,16 +180,13 @@ public:
     _hrConnected = false;
     _scanning    = false;
     gHeartRateBpm = 0;
+    gHeartRateBpmSnap = 0;
     DBG("BLE: stopped (deinit)");
   }
 
   // Send LED command to NRF (COMMENTED OUT)
-  // void sendLEDCmd(uint8_t cmd) {
-  //   if (_nrfConnected && _ledChar) _ledChar->writeValue(&cmd,1,false);
-  // }
-  // void sendBrakeCmd(uint8_t intensity) {
-  //   if (_nrfConnected && _brakeChar) _brakeChar->writeValue(&intensity,1,false);
-  // }
+  // void sendLEDCmd(uint8_t cmd) { ... }
+  // void sendBrakeCmd(uint8_t intensity) { ... }
 
 private:
   BLEScan*     _scan       = nullptr;
@@ -164,12 +209,35 @@ private:
 
   friend class HRClientCallbacks;  // allow callback access to private fields
 
-  // ── Connect to Garmin HR ──────────────────────────────────
+  // ── HR notify callback ────────────────────────────────────
+  // CRITICAL: runs in NimBLE-internal task with ~4KB stack.
+  // Do NOT call: gErrors.set/clear, Serial.printf in release,
+  // NVS, malloc, anything that touches another mutex.
+  // Just parse + bump timestamp. Error handling moves to tick().
   static void _hrNotifyCB(BLERemoteCharacteristic*, uint8_t* d, size_t l, bool) {
-    parseHRMeasurement(d, l);
     extern BLEManager gBLE;
     gBLE._hrLastDataMs = millis();
-    checkModuleBLEHR(true);
+    parseHR_fast(d, l);
+
+#ifdef BLE_DEBUG
+    // Stack/heap watchdog — only enabled in debug builds.
+    // Min stack high-water mark observed → if it drops, we're close to overflow.
+    UBaseType_t stack = uxTaskGetStackHighWaterMark(NULL);
+    uint32_t heap = ESP.getFreeHeap();
+    static UBaseType_t minStack = UINT32_MAX;
+    static uint32_t   minHeap = UINT32_MAX;
+    if (stack < minStack) minStack = stack;
+    if (heap  < minHeap)  minHeap  = heap;
+    // Rate-limit: log only every 10th call or when new minima
+    static uint8_t cnt = 0;
+    if (++cnt >= 10 || stack < 512 || heap < 20000) {
+      cnt = 0;
+      Serial.printf("[BLE_CB] hr=%u stack=%u(min=%u) heap=%u(min=%u)\n",
+                    (unsigned)gHeartRateBpm,
+                    (unsigned)stack, (unsigned)minStack,
+                    (unsigned)heap,  (unsigned)minHeap);
+    }
+#endif
   }
 
   void _connectHR() {
@@ -199,7 +267,7 @@ private:
       _hrConnected = true;
       _hrLastDataMs = millis();
       DBG("BLE: HR connected and subscribed!");
-      checkModuleBLEHR(true);
+      // checkModuleBLEHR(true) → handled by tick() now
     }
 
     delete _scanCB.foundHR; _scanCB.foundHR = nullptr;
@@ -215,5 +283,5 @@ inline void HRClientCallbacks::onDisconnect(BLEClient*) {
   gHeartRateBpm        = 0;
   gBLE._rescanPending  = true;  // tick() will call startScan() — never call BLE API from callback
   DBG("BLE: HR disconnected");
-  checkModuleBLEHR(false);
+  // checkModuleBLEHR(false) → handled by tick() now
 }

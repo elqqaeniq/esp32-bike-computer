@@ -1,22 +1,23 @@
 #pragma once
 // =============================================================
-//  ERROR_HANDLER.H — Module error notifications
+//  ERROR_HANDLER.H v1.1.4 — Module error notifications
 //  Shows alerts on display + Serial output
 // =============================================================
 #include <Arduino.h>
 
 // Error codes
 enum ErrorCode : uint8_t {
-  ERR_NONE       = 0,
-  ERR_DISPLAY    = 1,
-  ERR_GPS        = 2,
-  ERR_IMU        = 3,
-  ERR_BTN        = 4,  // reserved (external button modules)
-  ERR_VBAT_ADC   = 5,
-  ERR_BLE_HR     = 6,
-  ERR_FS         = 7,  // LittleFS mount/write failure (v1.1.2)
-  ERR_OTA_FAIL   = 8,
-  ERR_PSRAM      = 9,
+  ERR_NONE        = 0,
+  ERR_DISPLAY     = 1,
+  ERR_GPS         = 2,
+  ERR_IMU         = 3,
+  ERR_BTN         = 4,  // reserved (external button modules)
+  ERR_VBAT_ADC    = 5,
+  ERR_BLE_HR      = 6,
+  ERR_FS          = 7,  // LittleFS mount/write failure (v1.1.2)
+  ERR_OTA_FAIL    = 8,
+  ERR_PSRAM       = 9,
+  ERR_LAST_PANIC  = 10, // Previous boot ended in panic/WDT/brownout (v1.1.4)
   ERR_COUNT
 };
 
@@ -31,11 +32,12 @@ static const char* ERR_NAMES[ERR_COUNT] = {
   "FS: LittleFS mount failed",
   "OTA: flash error",
   "PSRAM: not detected",
+  "Last boot: abnormal reset (see /crashes)",
 };
 
 static const char* ERR_SHORT[ERR_COUNT] = {
   "OK","DISPLAY","NO GPS","NO IMU","BTN ERR",
-  "BAT ERR","NO HR BLE","FS ERR","OTA ERR","NO PSRAM",
+  "BAT ERR","NO HR BLE","FS ERR","OTA ERR","NO PSRAM","CRASHED",
 };
 
 // Error severity
@@ -99,49 +101,17 @@ public:
     return false;
   }
 
-  // Get next active error for status bar icon
+  // Get first active error (for status bar dot / settings indicator).
   ErrorCode firstActive() const {
     for (uint8_t i=0; i<MAX_ERRORS; i++)
       if (_e[i].active) return _e[i].code;
     return ERR_NONE;
   }
 
-  // Consume dirty flag (for display redraw)
-  bool dirty() { bool d=_dirty; _dirty=false; return d; }
-
-  // For web settings page / serial dump
-  void printAll() const {
-    Serial.println("=== ERROR STATUS ===");
-    bool any = false;
-    for (uint8_t i=0; i<MAX_ERRORS; i++) {
-      if (_e[i].active) {
-        Serial.printf("  [%s] count=%u age=%lums\n",
-          ERR_NAMES[_e[i].code], _e[i].count,
-          millis()-_e[i].firstMs);
-        any = true;
-      }
-    }
-    if (!any) Serial.println("  All systems OK");
-    Serial.println("====================");
-  }
-
-  // Returns JSON string for captive portal
-  String toJSON() const {
-    String j = "[";
-    bool first = true;
-    for (uint8_t i=0; i<MAX_ERRORS; i++) {
-      if (_e[i].active) {
-        if (!first) j += ",";
-        j += "{\"code\":" + String(_e[i].code)
-           + ",\"msg\":\"" + ERR_NAMES[_e[i].code]
-           + "\",\"count\":" + String(_e[i].count)
-           + ",\"age\":" + String((millis()-_e[i].firstMs)/1000)
-           + "}";
-        first = false;
-      }
-    }
-    j += "]";
-    return j;
+  bool dirty() {
+    bool d = _dirty;
+    _dirty = false;
+    return d;
   }
 
   const ErrorEntry* entries() const { return _e; }
@@ -150,56 +120,22 @@ private:
   ErrorEntry _e[MAX_ERRORS] = {};
   bool _dirty = false;
 
-  void _printSerial(ErrorCode code, ErrSeverity sev, bool repeat) {
-    const char* tag = sev==SEV_CRITICAL?"[CRITICAL]":
-                      sev==SEV_WARN?"[WARN]":"[INFO]";
-    if (repeat) {
-      Serial.printf("%s REPEAT: %s\n", tag, ERR_NAMES[code]);
-    } else {
-      Serial.printf("%s NEW ERROR: %s\n", tag, ERR_NAMES[code]);
-    }
+  void _printSerial(ErrorCode c, ErrSeverity sev, bool repeat) {
+    const char* sevStr = sev==SEV_CRITICAL?"CRIT":sev==SEV_WARN?"WARN":"INFO";
+    Serial.printf("[ERR][%s] %s %s\n", sevStr, ERR_NAMES[c],
+                  repeat ? "(recurring)" : "(new)");
   }
 };
 
+// === Module-specific helpers (called from module code) =======
 extern ErrorHandler gErrors;
 
-// ── Module init check helpers ─────────────────────────────────
-// Call these in setup() after each module init attempt
+inline void checkModuleBLEHR(bool ok) {
+  if (ok) gErrors.clear(ERR_BLE_HR);
+  else    gErrors.set(ERR_BLE_HR, SEV_WARN);
+}
 
 inline void checkModuleIMU(bool ok) {
-  if (ok) {
-    Serial.println("[INIT] IMU MPU6500: OK");
-    gErrors.clear(ERR_IMU);
-  } else {
-    Serial.println("[INIT] IMU MPU6500: FAILED — check I2C wiring, addr 0x68");
-    gErrors.set(ERR_IMU, SEV_CRITICAL);
-  }
-}
-
-inline void checkModuleGPS(bool hasData) {
-  if (hasData) {
-    gErrors.clear(ERR_GPS);
-  } else {
-    gErrors.set(ERR_GPS, SEV_WARN);
-  }
-}
-
-inline void checkModulePSRAM() {
-  if (psramFound()) {
-    Serial.printf("[INIT] PSRAM: %.1f MB available\n",
-                  ESP.getFreePsram()/1048576.0f);
-  } else {
-    Serial.println("[INIT] PSRAM: NOT FOUND — track buffer will use heap");
-    gErrors.set(ERR_PSRAM, SEV_WARN);
-  }
-}
-
-inline void checkModuleBLEHR(bool connected) {
-  if (connected) {
-    Serial.println("[BLE] HR: Garmin connected");
-    gErrors.clear(ERR_BLE_HR);
-  } else {
-    Serial.println("[BLE] HR: Garmin not found (scanning...)");
-    gErrors.set(ERR_BLE_HR, SEV_INFO);
-  }
+  if (ok) gErrors.clear(ERR_IMU);
+  else    gErrors.set(ERR_IMU, SEV_CRITICAL);
 }

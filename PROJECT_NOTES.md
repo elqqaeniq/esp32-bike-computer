@@ -1,154 +1,171 @@
-# Bike Computer — Project Notes
+# PROJECT_NOTES — ESP32 Bike Computer
 
-> Living document. Update after every working session.
-> Last updated: 2026-04-26 (v1.1.3)
+## 🎯 Поточний стан
+**v1.1.4** — BLE crash fix + UI cleanup + CrashLogger.
 
----
-
-## 🎯 Що це
-ESP32-S3-N16R8 велокомп'ютер з круглим дисплеєм 360×360, GPS, IMU, BLE HR (Garmin),
-WS2812 фронтальними поворотниками. NRF52840 задній модуль (24 LED + cadence ANT+) —
-**plan**, поки відключений у прошивці.
+Гілка фокусу: **діагностика + стабільність** перед польовими тестами.
+Після v1.1.4 — v1.2.0 (архітектурний рефакторинг + польові тести).
 
 ---
 
-## 🏗 Архітектурні рішення
+## 📋 Roadmap
 
-### Чому inline USNO замість Dusk2Dawn (v1.1.3)
-Dusk2Dawn v1.0.1 містить `#include <Math.h>` (велика M) у своєму заголовку.
-На Windows файлова система case-insensitive — компілюється. На Linux (GitHub Actions)
-`Math.h ≠ math.h` → `fatal error: Math.h: No such file or directory`. Баг
-присутній в єдиній релізній версії бібліотеки, без upstream виправлення.
+### v1.0 — first compile (попередній чат)
+- [x] Дисплей, GPS, IMU, BLE HR, WS2812 фронт
+- [x] 3 основні екрани + 10 налаштувань
+- [x] OTA через captive portal
+- [x] Збереження одометра та калібровки
 
-Рішення: прибрати залежність повністю. Sunrise/sunset — це детерміновані астрономічні
-формули (алгоритм USNO), без зовнішнього стану, без ініціалізації. 50 рядків
-`calcSunMinutes()` замінюють бібліотеку повністю. Той самий алгоритм, який
-Dusk2Dawn використовував всередині (edwilliams.org). Точність ±1 хв до ±72° широти.
+### v1.1 — Code review fixes
+- [x] Виправити критичні race conditions
+- [x] Виправити MAP encoder logic
+- [x] Виправити VBAT divider
+- [x] Виправити COL_VIOLET та інші дрібниці
 
-Полярна ніч/день: `calcSunMinutes()` повертає `-1` → `gSunriseH = 0.0f` →
-UI показує "No fix" (перевірка `gSunriseH > 0` залишилась незмінною).
+### v1.1.1 — QSPI display fix
+- [x] Перепризначити піни дисплея під реальний QSPI-модуль
+- [x] Замінити `Arduino_HWSPI` на `Arduino_ESP32QSPI` в .ino
+- [x] Оновити wiring diagram (v3)
 
-### Чому LittleFS + кастомна partition table (v1.1.2)
-Стандартні preset'и Arduino IDE не підходять:
-- "Huge APP (3MB No OTA)" — без OTA взагалі (а ми робимо captive portal upload)
-- "Default 4MB" — для 4MB чіпа, не 16MB
-- "16M Flash with FATFS" — є, але FAT має великий overhead і немає журналювання
+### v1.1.2 — File system + NVS wear leveling
+- [x] Кастомна `partitions.csv` (2× 3MB OTA + 64KB coredump + ~9.875MB LittleFS)
+- [x] LittleFS init у setup()
+- [x] `ODOM_SAVE_KM` 0.1 → 1.0 + force-save у трьох точках
+- [x] `PIN_TFT_TE` ISR FPS counter
+- [x] `ERR_FS` error code + bonus fix `ERR_NAMES[]` alignment
+- [x] `settings.h` SN PREF_SETT consistency cleanup
 
-Власна `partitions.csv`: 2× 3MB OTA + 64KB coredump + ~9.875MB LittleFS.
-LittleFS обраний над SPIFFS (deprecated в IDF 5.x) і FATFS (overhead, no journal):
-має справжні директорії, журналювання (стійкість до raptовогo вимикання — для
-велокомпа критично), wear-leveling, нормальну швидкість.
+### v1.1.3 — Dusk2Dawn removal + first successful flash
+- [x] Dusk2Dawn замінено на inline USNO `calcSunMinutes()`
+- [x] CI build виправлено
+- [x] Перша успішна прошивка на залізо через `esptool`
+- [x] Документація: BUILD.md §4.1 (manual flash), troubleshooting `ets_loader.c 78`
+- [x] `--flash-mode keep` задокументовано
 
-Партиція виділена *зараз*, навіть без активного використання — щоб уникнути
-destructive partition resize при додаванні GPX експорту в v1.2/v2.x.
-Зміна partition table при OTA вимагає ручного "Erase All Flash" — ми це
-робимо один раз при переході 1.1.1→1.1.2.
+### v1.1.4 — BLE crash fix + UI cleanup + crash logger ✅ (поточна)
+- [x] **BLE HR notify CB hardened** — винесено `checkModuleBLEHR` у tick()
+- [x] **`gHeartRateBpmSnap` snapshot pattern** (як для IMU)
+- [x] **`BLE_DEBUG` стек/heap watchdog** для діагностики (#ifdef opt-in)
+- [x] **CrashLogger module**: `/boot.log`, `/crashes/crash_NN.txt`, `ERR_LAST_PANIC`
+- [x] **UI cleanup**: видалено `fillArc` ring, дату — з status bar на S_TIME
+- [x] **Status bar**: textSize 2 для time/HR/batt, білий колір; size 1 для індикаторів
+- [x] **`drawArcLabel` оптимізація** через canvas blit (~10× швидше)
+- [x] **UI design tokens** у `config.h` (`UI_SKIP_COLOR`, `UI_ARC_*`, `UI_CVS_*`)
+- [x] **Видалено `drawErrorOverlay()`** — більше нема банера на головних екранах
+- [x] **S_BATTERY**: показ last reset reason + crash count
 
-### Чому ODOM_SAVE_KM 1.0 замість 0.1 (v1.1.2)
-NVS на ESP32 використовує ту саму flash що і код — обмежена кількість write
-cycles на page (~100k за специфікацією, реально 5-10× більше). Зберігаючи
-`total_km` кожні 100м, за 10000км пробігу ми мали б 100k записів того самого
-ключа — впритул до межі.
+### v1.2.0 — Архітектурний рефакторинг + польові тести
+**Фокус**: модульність, dual-core, стабільність, енергоефективність.
 
-Збільшено до 1км + force-save у трьох додаткових точках (settings open,
-OTA start, OTA flash final). Втрата при power loss зросла з ≤100м до ≤1км,
-але реальна частина пробігу між зупинками зазвичай зберігається через
-settings checkpoint. Ресурс flash збільшено в 10×.
+#### Архітектура — розділення .ino на модулі
+- [ ] Рішення: Arduino IDE чи PlatformIO? (PlatformIO = повний контроль build)
+- [ ] `display_screens.cpp/h` ← drawScreenRiding/Map/Terrain з .ino
+- [ ] `display_statusbar.cpp/h` ← drawStatusBar, drawArcLabel, canvas mgmt
+- [ ] `display_settings.cpp/h` ← усі 10 drawSett*() функцій
+- [ ] `gps_manager.cpp/h` ← GPS update logic, calcSunMinutes(), astronomy
+- [ ] `input_handler.cpp/h` ← encoder rotation, button reads, debounce
+- [ ] `app_globals.cpp/h` ← усі extern глобальні змінні в одному місці
+- [ ] `main.ino` ← тільки setup() + loop() (~100 рядків)
 
-### Чому TE pin лише як FPS counter (v1.1.2)
-TE (Tearing Effect) виходить з контролера дисплея кожен раз як завершується
-внутрішній refresh кадру (~60 Hz). У повному використанні — синхронізація
-gfx writes з TE усуває tearing. Але це вимагає переписати display loop
-(чекати TE перед `fillRect`/`pushPixels`).
+#### Dual-core розподіл (FreeRTOS)
+- [ ] Core 0 (PRO_CPU) — "Sensor & Comms": BLE, GPS UART, IMU sampling
+- [ ] Core 1 (APP_CPU) — "UI & Storage": display, encoder, settings, OTA, LittleFS
+- [ ] Комунікація: atomic snapshots (як gHeartRateBpmSnap), FreeRTOS queues
+- [ ] Дослідити light_sleep між тіками коли велосипед стоїть
 
-Поки що — ISR-counter, що рахує реальний FPS. Корисно як метрика для тюнінга
-`TFT_SPI_FREQ` та для валідації виграшу від partial redraws у v1.2.
-Інтеграцію в draw loop робимо разом з partial redraws (один заплутаний
-рефакторинг краще ніж два).
+#### Рефакторинг існуючих .h файлів
+- [ ] `error_handler.h` → .cpp/.h: static масиви ERR_NAMES[] у .cpp,
+      _e[ERR_COUNT] з прямим індексом O(1) замість лінійного пошуку
+- [ ] `settings.h` → розділити: settings_data.h (structs), settings_logic.cpp
+      (rotate/edit), settings_persist.cpp (NVS)
+- [ ] `ble_manager.h`: reconnect exponential backoff (5s→10→20→60s cap),
+      fix foundHR raw pointer leak (std::unique_ptr)
+- [ ] `mpu6500.h`: begin() повертає bool (зараз void)
+- [ ] `led_controller.h`: LED show() на Core 1 (подалі від BLE)
+- [ ] `ota_update.h`: при OTA — GPS pause, OTA на Core 1
+- [ ] `config.h`: розбити на #pragma region секції
+- [ ] `ui_theme.h`: constexpr де можливо
 
-### Чому QSPI замість звичайного SPI для дисплея
-Маркування фізичного модуля `TE BL CS RST IO3 IO2 IO1 SDA SCL` — це signature
-QSPI-дисплея. ST77916 на круглих 360×360 модулях майже завжди йде у QSPI
-режимі (single-line SPI занадто повільний для 360×360@RGB565 = 252KB/frame).
+#### Web UI (deferred з v1.1.4)
+- [ ] `/crashes` endpoint — список crash файлів
+- [ ] `/boot-log` endpoint — останні 50 boots
+- [ ] `/crashes/clear` POST — видалення crash файлів
+- [ ] `/crashes/view?f=...` — перегляд окремого crash файлу
+- [ ] Нові методи у crash_logger.h для web UI (listCrashes, readCrash, readBootLog)
 
-Ключова відмінність: **DC-піна немає**. Команда vs дані розрізняються бітом
-у заголовку SPI-кадру (24-bit header перед payload), а не апаратним сигналом.
-Тому стара ініціалізація `Arduino_HWSPI(DC, CS, SCK, MOSI, ...)` не підходить
-— потрібен `Arduino_ESP32QSPI(CS, SCK, D0, D1, D2, D3)`.
+#### Фічі
+- [ ] **Експорт треку у GPX** через web UI (LittleFS готовий)
+- [ ] **Error display в settings menu** — per-module секції (див. "Ідеї" нижче)
+- [ ] Реалізувати ідею покращення ODOM_SAVE (deferred з v1.1.2)
+- [ ] TE-driven partial redraws
 
-Перепризначення пінів (v1.1.1):
-- GPIO 11 (MOSI) → D0 (та сама лінія, бо D0 у QSPI = MOSI у single-SPI)
-- GPIO 13 (DC)   → D1 (DC більше не потрібен, пін повторно використано)
-- GPIO 15        → D2 (новий)
-- GPIO 38        → D3 (новий)
+#### Польові тести
+- [ ] Розпаяти на breadboard / у корпусі
+- [ ] First boot: дисплей, GPS lock, IMU read
+- [ ] Тест BLE до Garmin Forerunner 255s (re-test після v1.1.4 fix)
+- [ ] Тест OTA upload через captive portal
+- [ ] Польова калібровка BRAKE_THRESHOLD/MAX
+- [ ] Польова калібровка POTHOLE_G
+- [ ] Виміряти реальний impact display partial redraws (з TE синхронізацією)
 
-Перевірені вільні GPIO на N16R8 з OPI PSRAM: 15, 38, 39, 40, 41, 42, 47.
-GPIO 26-37 зайняті flash+PSRAM, 45/48 — strapping.
+### v2.0 — NRF активація
+- [ ] Прошити NRF52840 (rear unit)
+- [ ] Розкоментувати NRF код в усіх 5 файлах
+- [ ] Тест BLE link ESP↔NRF на дальність
+- [ ] Інтеграція ANT+ cadence (Magene S3)
 
-Пропускна стане ~4× вища. Це частково розв'язує TODO про повільний `fillRect`
-з v1.2 roadmap (без переписування всього drawing layer).
-
-### Чому Adafruit_NeoPixel замість FastLED
-FastLED на ESP32-S3 має пін-валідацію, що відмовляє на GPIO16 (хоча він валідний).
-NeoPixel використовує RMT драйвер без обмежень. Дата на GPIO16, не чіпай.
-
-### Чому NRF поки відключений
-Хочу спочатку підтвердити роботу основного модуля на велосипеді.
-Усі NRF-related виклики закоментовані з префіксом `// NRF disabled:`.
-План активації:
-1. Розкоментувати `BLE_NRF_*` у `config.h`
-2. Розкоментувати NRF гілки у `ble_manager.h` (foundNRF, _connectNRF, characteristics)
-3. Розкоментувати `_sendNRFCmd` body в `led_controller.h`
-4. Розкоментувати S_LED rear rows у `settings.h`
-5. Розкоментувати UI поля в `ota_update.h` для rear LED settings
-
-### Чому Y-вісь IMU = forward
-Кріплення MPU6500 на корпусі. Y → forward → ay зчитує гальмування (від'ємний при гальмуванні).
-
-### Чому ADC дільник 200k+100k (раніше 100k+200k)
-Vbat=4.2V → ADC=1.40V — середина лінійного діапазону ESP32-S3 ADC1@11dB.
-Стара схема (100k+200k) давала ADC=2.8V, де нелінійність 3-5% і нефіксується коефіцієнтом.
-Equivalent impedance залишилось 66.7kΩ, 100nF cap працює так само, струм спокою ~14μA.
-`VBAT_RATIO` змінений з 1.5 на 3.0 у config.h.
-
-### Чому INPUT_PULLDOWN на кнопках
-Сенсорні модулі TTP223 — push-pull вихід, активно тримає HIGH/LOW коли живиться.
-Однак якщо модуль фізично відключений (а провід ще йде до GPIO) — pin floating
-→ випадкові спрацювання. PULLDOWN як safety net (TTP223 push-pull сильніший
-за внутрішній 45kΩ pulldown — конфлікту немає).
-
-### Чому IMU через snapshot під spinlock
-IMU task на Core 0 пише в `gIMU.data` 50 разів/сек. Drawing/loop/web-handler
-читають з Core 1. Структура з float — не атомарна → tearing reads.
-Рішення: `portMUX_TYPE` + `IMUData gIMUSnapshot` що оновлюється раз за loop.
-Усі read-сайди (drawing, OTA web) використовують snapshot, ніколи `gIMU.data` напряму.
-
-### Чому BLE deinit перед OTA
-На ESP32-S3 BLE+WiFi coexistence працює, але RAM ~30-40KB на BLE stack +
-AsyncWebServer + Update buffer = ризик OOM при upload .bin (1MB+).
-`gBLE.end()` робить deinit перед `WiFi.softAP()`, після `stop()` — `begin()`.
+### v3.0 — Nice to have + future ideas
+- [ ] Графік висоти / швидкості за сесію
+- [ ] Багатотрек: вибір з кеша на пристрої
+- [ ] Crash detection (різке падіння az + зупинка)
+- [ ] Stand-by mode при бездіяльності
+- [ ] TE-driven partial redraws для anti-tearing
+- [ ] **GPX track upload to Google Drive** через домашній WiFi
+      (memory note from prior session)
+- [ ] **Garmin-compatible `.fit` activity files** (track + HR + cadence)
+      для імпорту у Garmin Connect / Strava (memory note from prior session)
 
 ---
 
-## 🐛 Виправлені баги (v1.1)
-- [x] `gLastScreenMs` конфлікт між auto-scroll і display refresh → розділено на 3 змінні
-- [x] MAP режими (zoom/pan) не працювали → реалізовано в handleEncoder
-- [x] `COL_VIOLET` передавався як колір замість `PAL565[COL_VIOLET]` у drawSettOTA
-- [x] Race condition на `gIMU.data` (Core 0 пише, Core 1 читає) → snapshot під spinlock
-- [x] Race condition на `Preferences` між IMU task і loop → calibration через flag
-- [x] BLE+WiFi одночасно під час OTA → BLE deinit перед AP start
-- [x] Кнопки без INPUT_PULLDOWN → додано safety pulldown
-- [x] `gTrackLen` не скидався при reset session → resetSession() helper
-- [x] `gAvgSpeedAcc` overflow через ~10 годин → ділення на 2 коли N>32000
-- [x] `temperatureRead()` deprecated → захищений #ifdef з fallback
-- [x] PSRAM показ без перевірки → `psramFound()` guard
+## 💡 Ідеї до обговорення (deferred)
 
-## 🐛 Відкриті баги (TODO для v1.2)
-- [ ] Display performance: `fillRect` весь area при кожному кадрі — повільно
-      (~25ms на 40MHz SPI). Зробити partial redraws тільки на змінах.
-- [ ] `_handleUpdate()` пише в `gErrors` з web server task — race з основним потоком
-- [ ] Буфери `char buf[16]` у hot path drawing — винести як static
-- [ ] `drawScreenTerrain` ~25 setTextColor викликів за кадр — згрупувати
+### Error display in settings (v1.2.0)
+Зараз (з v1.1.4) активна помилка показується тільки червоною точкою у статус
+барі. Повний список — через Serial або S_BATTERY settings screen.
+
+**План на v1.2.0**: кожен settings screen показує помилки релевантного модуля
+у відповідній секції на самому екрані (без overlay):
+- `S_GPS` → `ERR_GPS` ("GPS: no data >5s")
+- `S_IMU` → `ERR_IMU` ("I2C not found 0x68")
+- `S_BLE` → `ERR_BLE_HR` ("Garmin not found")
+- `S_BATTERY` → `ERR_VBAT_ADC`, `ERR_PSRAM`, `ERR_FS`, `ERR_LAST_PANIC`
+- `S_OTA` → `ERR_OTA_FAIL`
+
+**Додатковий індикатор**: позначка `!` поряд з назвою settings screen у header
+(наприклад `IMU !`) — якщо для цього модуля є active error. Дозволяє користувачу
+знайти "де помилка" швидше, не сканувати всі 10 екранів.
+
+Реалізація: helper-функція у `settings.h`/`error_handler.h`:
+```cpp
+inline ErrorCode firstActiveForScreen(SettScreen s) {
+  switch(s) {
+    case S_GPS:     return gErrors.isActive(ERR_GPS) ? ERR_GPS : ERR_NONE;
+    case S_IMU:     return gErrors.isActive(ERR_IMU) ? ERR_IMU : ERR_NONE;
+    // ...
+  }
+}
+```
+
+### Покращення ODOM_SAVE (v1.2.0)
+Користувач має ідею щодо подальшої оптимізації збереження одометра.
+Контекст: зараз save раз на 1км + force-save на settings open / OTA start /
+OTA flash final. Повернутись до обговорення перед v1.2 implementation.
+
+### TE-driven anti-tearing (v3.0)
+Зараз TE — лише FPS counter. Повна синхронізація вимагає: чекати на TE
+RISING edge перед `gfx->fillRect`/`pushPixels`. Зробити після того як
+буде partial redraws (без них немає сенсу — full screen redraw 252KB
+все одно займає кілька кадрів TE).
 
 ---
 
@@ -164,67 +181,6 @@ AsyncWebServer + Update buffer = ризик OOM при upload .bin (1MB+).
 
 ---
 
-## 📋 Roadmap
-
-### v1.0 — first compile (попередній чат)
-- [x] Дисплей, GPS, IMU, BLE HR, WS2812 фронт
-- [x] 3 основні екрани + 10 налаштувань
-- [x] OTA через captive portal
-- [x] Збереження одометра та калібровки
-
-### v1.1 — Code review fixes (виправлення критичних багів)
-- [x] Виправити критичні race conditions
-- [x] Виправити MAP encoder logic
-- [x] Виправити VBAT divider
-- [x] Виправити COL_VIOLET та інші дрібниці
-
-### v1.1.1 — QSPI display fix
-- [x] Перепризначити піни дисплея під реальний QSPI-модуль
-- [x] Замінити `Arduino_HWSPI` на `Arduino_ESP32QSPI` в .ino
-- [x] Оновити wiring diagram (v3)
-
-### v1.1.2 — File system + NVS wear leveling ✅
-- [x] Кастомна `partitions.csv` (2× 3MB OTA + 64KB coredump + ~9.875MB LittleFS)
-- [x] LittleFS init у setup() (без активного використання поки що)
-- [x] `ODOM_SAVE_KM` 0.1 → 1.0 + force-save у трьох точках
-- [x] `PIN_TFT_TE` ISR FPS counter
-- [x] `ERR_FS` error code + bonus fix `ERR_NAMES[]` alignment
-- [x] `settings.h` SN PREF_SETT consistency cleanup
-
-### v1.1.3 — Dusk2Dawn removal + first successful flash ✅
-- [x] Dusk2Dawn замінено на inline USNO `calcSunMinutes()`
-- [x] CI build виправлено (прибрано Dusk2Dawn install step)
-- [x] Перша успішна прошивка на залізо через `esptool`
-- [x] Документація: BUILD.md §4.1 (manual flash), troubleshooting `ets_loader.c 78`
-- [x] `--flash-mode keep` задокументовано (CI bootloader = DIO, не QIO)
-
-### v1.2 — Польові тести + перші features на FS
-- [ ] Розпаяти на breadboard / у корпусі
-- [ ] First boot: дисплей, GPS lock, IMU read
-- [ ] Тест BLE до Garmin Forerunner 255s
-- [ ] Тест OTA upload через captive portal
-- [ ] Польова калібровка BRAKE_THRESHOLD/MAX
-- [ ] Польова калібровка POTHOLE_G
-- [ ] Виміряти реальний impact display partial redraws (з TE синхронізацією)
-- [ ] **Експорт треку у GPX** через web UI (тепер можливо через LittleFS)
-- [ ] Crash log → LittleFS (читання з web `/logs`)
-- [ ] Реалізувати ідею покращення ODOM_SAVE (deferred from v1.1.2 — обговорити)
-
-### v2.0 — NRF активація
-- [ ] Прошити NRF52840 (rear unit)
-- [ ] Розкоментувати NRF код в усіх 5 файлах
-- [ ] Тест BLE link ESP↔NRF на дальність
-- [ ] Інтеграція ANT+ cadence (Magene S3)
-
-### v3.0 — Nice to have
-- [ ] Графік висоти / швидкості за сесію (рендер з LittleFS треку)
-- [ ] Багатотрек: вибір з кеша на пристрої
-- [ ] Crash detection (різке падіння az + зупинка)
-- [ ] Stand-by mode при бездіяльності
-- [ ] TE-driven partial redraws для anti-tearing
-
----
-
 ## 🔌 Pinout (ESP32-S3-N16R8)
 Деталі див. `wiring_diagram_v3.html`. Резерви:
 - GPIO 26-37: flash + PSRAM (НЕ ЧІПАТИ)
@@ -232,17 +188,43 @@ AsyncWebServer + Update buffer = ризик OOM при upload .bin (1MB+).
 - Вільні: 40, 41, 42, 47 (з обмеженнями для USB на 19/20)
 - GPIO 39 — використано для TE pin з v1.1.2
 
-Display QSPI naming convention (з v1.1.1, доповнено TE у v1.1.2):
+Display QSPI naming convention (з v1.1.1):
 - `PIN_TFT_D0 = 11` — SDA (MOSI у single-SPI режимі)
-- `PIN_TFT_D1 = 13` — IO1 (раніше DC у v1.0/1.1)
-- `PIN_TFT_D2 = 15` — IO2 (новий пін)
-- `PIN_TFT_D3 = 38` — IO3 (новий пін)
+- `PIN_TFT_D1 = 13` — IO1
+- `PIN_TFT_D2 = 15` — IO2
+- `PIN_TFT_D3 = 38` — IO3
 - `PIN_TFT_SCK = 12`, `PIN_TFT_CS = 10`, `PIN_TFT_RST = 14`, `PIN_TFT_BL = 21`
-- `PIN_TFT_TE = 39` — Tearing Effect input (FPS counter в v1.1.2)
+- `PIN_TFT_TE = 39` — Tearing Effect (FPS counter в v1.1.2)
 
 GPS naming convention (з v1.1):
 - `PIN_GPS_TX_PIN = 17` — ESP TX → GPS RX
 - `PIN_GPS_RX_PIN = 18` — ESP RX ← GPS TX
+
+Encoder + Buttons (з config.h):
+- `PIN_ENC_CLK = 4`, `PIN_ENC_DT = 5`, `PIN_ENC_SW = 6`
+- `PIN_BTN1 = 1` (LEFT), `PIN_BTN2 = 2` (RIGHT), `PIN_BTN3 = 3` (TY/HAZARD)
+
+---
+
+## 🎨 UI Design Tokens (з v1.1.4)
+
+Усі magic numbers для UI — у `config.h` під заголовком "UI DESIGN TOKENS".
+Не дублювати константи в інших файлах. Якщо треба новий розмір тексту або
+радіус — додавай у config.h і використовуй макрос.
+
+| Токен | Значення | Призначення |
+|---|---|---|
+| `UI_SKIP_COLOR` | `0xF81F` (magenta) | sentinel для прозорого фону canvas |
+| `UI_ARC_CX/CY` | 180/180 | центр кругу для status-bar лейблів |
+| `UI_ARC_R_MID` | 165 | радіус позиціонування лейблів |
+| `UI_CVS_W_S1/H_S1` | 60/12 | input canvas для textSize 1 |
+| `UI_CVS_W_S2/H_S2` | 96/20 | input canvas для textSize 2 |
+| `UI_OUT_S1/S2` | 68/98 | output canvas (rotated bbox) |
+| `UI_FLIP_LO/HI_DEG` | 90/270 | діапазон кутів для flip 180° |
+
+Канвас blit pattern (з v1.1.4): малюємо текст у RAM canvas, повертаємо у
+вторинний RAM canvas, потім один `draw16bitRGBBitmapWithMask` на дисплей.
+Це ~10× швидше за per-pixel writePixel.
 
 ---
 
@@ -251,78 +233,56 @@ GPS naming convention (з v1.1):
 - MPU6500 register map: invensense.com
 - ATGM336H docs: [TODO додати]
 - Garmin HR profile: bluetooth.com GATT 0x180D
-
----
-
-## 💡 Ідеї до обговорення (deferred)
-
-### Покращення ODOM_SAVE (v1.2)
-Користувач має ідею щодо подальшої оптимізації збереження одометра.
-Контекст: зараз save раз на 1км + force-save на settings open / OTA start /
-OTA flash final. Повернутись до обговорення перед v1.2 implementation.
-
-### TE-driven anti-tearing (v3.0)
-Зараз TE — лише FPS counter. Повна синхронізація вимагає: чекати на TE
-RISING edge перед `gfx->fillRect`/`pushPixels`. Зробити після того як
-буде partial redraws (без них немає сенсу — full screen redraw 252KB
-все одно займає кілька кадрів TE).
+- ESP-IDF coredump API: docs.espressif.com → Core Dump
 
 ---
 
 ## 💬 Журнал сесій
 
+### 2026-04-28 — v1.1.4 фіналізація + архітектурний план v1.2.0
+- Web UI для crash log відкладено (методи видалено з crash_logger.h, записано в TODO).
+- Креші та логи поки тільки serial + LittleFS flash.
+- Складено план архітектурного рефакторингу v1.2.0:
+  - Розділення .ino на 7 модульних .cpp/.h файлів.
+  - Dual-core: Core 0 = сенсори (BLE/GPS/IMU), Core 1 = UI + storage.
+  - Поради по рефакторингу кожного .h файлу (error_handler O(1), settings split,
+    BLE backoff, mpu6500 begin() bool, LED на Core 1, OTA GPS pause).
+  - Записано у TODO v1.2.0, обговоримо пізніше.
+
+### 2026-04-27 — v1.1.4 — BLE crash fix + UI cleanup + crash logger
+- BLE crash при увімкненні Broadcast HR на годиннику ребутить ESP за ~5с.
+- Гіпотеза: `checkModuleBLEHR(true)` з NimBLE notify CB context (~4KB stack)
+  → stack overflow або WDT. Винесли усе error-bookkeeping у `tick()`.
+- Додано `BLE_DEBUG` опт-ін для логування stack/heap watermark у CB.
+- Створено `crash_logger.h`: boot reason → `/boot.log`, coredump summary →
+  `/crashes/crash_NN.txt`. Тільки serial + flash (web UI — TODO).
+- UI: видалено `fillArc` біле кільце безеля, дата прибрана зі status bar
+  (перенесена на S_TIME як read-only рядок).
+- Status bar: textSize 2 для time/HR/batt, білий колір; size 1 для індикаторів.
+- `drawArcLabel` переписано через canvas blit pattern (один blit замість
+  ~720 writePixel per label) — ~10× швидше, знижує тиск на BLE/IMU тасків.
+- Видалено `drawErrorOverlay()` повністю. Залишається тільки червона точка
+  на 12-год позиції безеля. Повне відображення помилок переходить у settings
+  у v1.2.0 (per-module sections).
+- Записано в TODO: error display в settings menu, зміна архітектури коду.
+
 ### 2026-04-26 — v1.1.3 — First successful flash to hardware
 - Перша спроба через **esptool-js** (web flasher) — boot loop `ets_loader.c 78`.
   Причина: web flasher патчив flash mode byte в bootloader header на QIO,
-  але CI-compiled bootloader зібраний з DIO (arduino-cli для ESP32-S3 не має
-  FlashMode як FQBN опцію — завжди DIO за замовчуванням).
-- Друга спроба через **esptool.py** (`python3 -m esptool`) з `--flash-mode qio` —
-  та сама помилка `ets_loader.c 78`.
-- **Рішення**: `--flash-mode keep` — не патчити mode byte, залишити DIO як є.
-  Успішний boot: `=== ESP32 Bike Computer v1.1.3 ===`.
-- IMU `not found (0x68)` — очікувано (MPU6500 ще не розпаяний).
-- GPS `no data >5s` — очікувано (в приміщенні).
-- BLE scan працює, шукає Garmin HR.
-- Linux flash: потрібен `sudo usermod -aG dialout $USER` або `sudo chmod a+rw /dev/ttyACM0`.
-  Порт ESP32-S3 нативний USB = `/dev/ttyACM0` (не `/dev/ttyUSB0`).
-- BUILD.md оновлено: §4.1 manual flash, troubleshooting `ets_loader.c 78`.
-- esptool v5.2.0: новий синтаксис (дефіси замість підкреслень: `write-flash`,
-  `--flash-mode`, `default-reset` тощо). Старий синтаксис працює з warnings.
-
-### 2026-04-26 — v1.1.3 — Remove Dusk2Dawn
-- Dusk2Dawn v1.0.1 містить `#include <Math.h>` (capital M) → CI на Linux
-  дає `fatal error`. Замінено на inline `calcSunMinutes()` (USNO algorithm).
-- BUILD.md: Dusk2Dawn прибрано з таблиці бібліотек.
-
-### 2026-04-26 — v1.1.2 — File system + NVS wear leveling
-- Обговорили partition table, файлові системи (LittleFS vs SPIFFS vs FATFS).
-- Створено `partitions.csv`: 2× 3MB OTA + 64KB coredump + ~9.875MB LittleFS.
-- LittleFS init у setup() — поки без активного використання, але партиція
-  є для майбутніх GPX треків / crash logs (без destructive partition resize).
-- `ODOM_SAVE_KM` 0.1 → 1.0 + force-save у settings open / OTA start / final.
-  10× менше зносу NVS, коректний ресурс flash для довгих пробігів.
-- `PIN_TFT_TE = GPIO 39` активовано як ISR FPS counter.
-- `ERR_FS` додано в slot 7 → попутно виправлено латентний bug `ERR_NAMES[]`
-  alignment (закоментований `ERR_BLE_NRF=7` створював зсув на ±1 для OTA/PSRAM).
-- `settings.h` SN → PREF_SETT, explicit include config.h.
+  але CI-compiled bootloader зібраний з DIO.
 - BUILD.md: Partition Scheme = Custom, додано §3.1 про partitions.csv,
   оновлено troubleshooting (LittleFS, "Sketch too big").
-- Запам'ятати: користувач має ідею покращення ODOM_SAVE на v1.2.
 
 ### 2026-04-26 — v1.1.1 — QSPI display
 - При першому заливі прошивки виявилось, що маркування модуля
   (`TE BL CS RST IO3 IO2 IO1 SDA SCL VCC GND`) не відповідає single-SPI.
   Це QSPI-дисплей (4 паралельні лінії даних, без DC).
 - Перепризначені піни: GPIO 13 з DC → D1, додано GPIO 15 (D2), GPIO 38 (D3).
-- В .ino замінено `Arduino_HWSPI` на `Arduino_ESP32QSPI`.
-- Перегенеровано wiring_diagram_v3.html.
 
 ### 2026-04-26 — v1.1 fixes
-- Code review: знайдено 7 критичних, 8 mid, 5+ optimization issues
-- Виправлено всі критичні + більшість mid (див. checklist вище)
-- Створено PROJECT_NOTES.md, BUILD.md, CHANGELOG.md
-- Готово до first hardware test
+- Code review: знайдено 7 критичних, 8 mid, 5+ optimization issues.
+- Виправлено всі критичні + більшість mid.
 
 ### 2026-04-26 — перенесено в проект
-- Перенесено контекст з попереднього чату (6 частин)
-- Файли v1.0 успішно компілювались, але не прошивались на залізо
+- Перенесено контекст з попереднього чату (6 частин).
+- Файли v1.0 успішно компілювались, але не прошивались на залізо.

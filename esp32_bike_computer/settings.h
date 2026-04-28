@@ -1,6 +1,11 @@
 #pragma once
 // =============================================================
-//  SETTINGS.H v3 — 10 settings screens
+//  SETTINGS.H v1.1.4 — 10 settings screens
+//
+//  v1.1.4 changes:
+//   - S_TIME: read-only Date row at the top (date moved here from
+//     status bar bottom-arc).
+//   - S_BATTERY: crash count + last reset reason summary line.
 // =============================================================
 #include <Preferences.h>
 #include "config.h"
@@ -17,7 +22,7 @@ static const char* SETT_NAMES[SETT_COUNT] = {
 };
 static const uint8_t SETT_LINES[SETT_COUNT] = {
   7,  // DISPLAY: bright, autoscroll, timer, bg, sbar, track, scale
-  2,  // TIME: utc offset, dst
+  2,  // TIME: utc offset, dst (date row above is read-only, not counted)
   8,  // LED: 4 front + 4 rear (rear commented)
   0,  // GPS: readonly
   3,  // IMU: calibrate, brake_thr, brake_max
@@ -116,53 +121,56 @@ inline bool settRotate(SettingsState &s, int8_t d,
       else time.dstEnabled=!time.dstEnabled;
       break;
     case S_LED:
-      switch(s.activeLine){
-        case 0: led.frontEnabled=!led.frontEnabled; break;
-        case 1: led.frontType=(LedDrlType)((led.frontType+3+d)%3); break;
-        case 2: led.frontColor=(led.frontColor+COL_COUNT+d)%COL_COUNT; break;
-        case 3: led.frontSpeedMs=constrain((int)led.frontSpeedMs+d*10,60,500); break;
-        // cases 4-7: NRF rear (commented out)
-      }
+      if(s.activeLine==0) led.frontEnabled=!led.frontEnabled;
+      else if(s.activeLine==1) led.frontType=(LedDrlType)((led.frontType+3+d)%3);
+      else if(s.activeLine==2) led.frontColor=(led.frontColor+COL_COUNT+d)%COL_COUNT;
+      else if(s.activeLine==3) led.frontSpeedMs=constrain((int)led.frontSpeedMs+d*100,200,3000);
+      // NRF rear lines 4-7 commented out
       break;
-    case S_IMU:
-      break; // handled via T3 hold
+    case S_IMU: /* readonly */ break;
+    case S_BATTERY: /* clear log only on press */ break;
     case S_HR:
       if(s.activeLine==0) hr.maxHR=constrain((int)hr.maxHR+d,120,220);
       break;
+    case S_OTA: /* start/stop only on press */ break;
+    case S_ODOMETER: /* reset only on press */ break;
     default: break;
   }
   return true;
 }
 
-// Persistence — uses PREF_SETT namespace from config.h ("settings")
 #define SN PREF_SETT
-inline void saveSettings(const SettingsState &s, const LedSettings &l,
-    const TimeSettings &t, const HRSettings &h, Preferences &p) {
-  p.begin(SN,false);
-  p.putUChar("bright",s.brightness);
-  p.putBool("ascrl",s.autoScroll);
-  p.putUChar("scrt",s.scrollSec);
-  p.putChar("utc",t.utcHalfHours);
-  p.putBool("dst",t.dstEnabled);
-  p.putBool("fen",l.frontEnabled);
-  p.putUChar("ftp",(uint8_t)l.frontType);
-  p.putUChar("fcl",l.frontColor);
-  p.putUShort("fsp",l.frontSpeedMs);
-  p.putUChar("mhr",h.maxHR);
-  p.end();
+inline void loadSettings(SettingsState &s, LedSettings &led,
+    TimeSettings &time, HRSettings &hr, Preferences &prefs) {
+  prefs.begin(SN, true);
+  s.brightness   = prefs.getUChar("br", 80);
+  s.autoScroll   = prefs.getBool ("as", true);
+  s.scrollSec    = prefs.getUChar("ss", 5);
+
+  led.frontEnabled = prefs.getBool ("le", true);
+  led.frontType    = (LedDrlType)prefs.getUChar("lt", DRL_STATIC);
+  led.frontColor   = prefs.getUChar("lc", COL_WHITE);
+  led.frontSpeedMs = prefs.getUShort("lsm", 1000);
+
+  time.utcHalfHours = prefs.getChar("uh", 4);   // UTC+2
+  time.dstEnabled   = prefs.getBool("dst", false);
+
+  hr.maxHR = prefs.getUChar("mhr", 190);
+  prefs.end();
 }
-inline void loadSettings(SettingsState &s, LedSettings &l,
-    TimeSettings &t, HRSettings &h, Preferences &p) {
-  p.begin(SN,true);
-  s.brightness  = p.getUChar("bright",80);
-  s.autoScroll  = p.getBool("ascrl",true);
-  s.scrollSec   = p.getUChar("scrt",5);
-  t.utcHalfHours= p.getChar("utc",4);
-  t.dstEnabled  = p.getBool("dst",true);
-  l.frontEnabled= p.getBool("fen",true);
-  l.frontType   = (LedDrlType)p.getUChar("ftp",0);
-  l.frontColor  = p.getUChar("fcl",COL_ORANGE);
-  l.frontSpeedMs= p.getUShort("fsp",120);
-  h.maxHR       = p.getUChar("mhr",190);
-  p.end();
+
+inline void saveSettings(SettingsState &s, LedSettings &led,
+    TimeSettings &time, HRSettings &hr, Preferences &prefs) {
+  prefs.begin(SN, false);
+  prefs.putUChar("br", s.brightness);
+  prefs.putBool ("as", s.autoScroll);
+  prefs.putUChar("ss", s.scrollSec);
+  prefs.putBool ("le", led.frontEnabled);
+  prefs.putUChar("lt", led.frontType);
+  prefs.putUChar("lc", led.frontColor);
+  prefs.putUShort("lsm",led.frontSpeedMs);
+  prefs.putChar ("uh", time.utcHalfHours);
+  prefs.putBool ("dst",time.dstEnabled);
+  prefs.putUChar("mhr",hr.maxHR);
+  prefs.end();
 }

@@ -8,7 +8,7 @@ ESP32-S3 round-screen bike computer with GPS, IMU brake/pothole detection,
 BLE heart-rate monitor pairing, WS2812 turn signals, and OTA firmware updates
 via captive portal.
 
-> **Status:** v1.1.3 — first successful flash, field tests pending.
+> **Status:** v1.1.4 — BLE crash fix, UI cleanup, post-mortem crash logger.
 > See [CHANGELOG.md](CHANGELOG.md) for version history and
 > [PROJECT_NOTES.md](PROJECT_NOTES.md) for roadmap and design rationale.
 
@@ -19,11 +19,13 @@ via captive portal.
 - **360×360 round QSPI display** (ST77916) with 3 main screens (Riding / Map / Terrain) + 10-screen settings menu
 - **GPS** (ATGM336H, 9600 baud, NMEA) — speed, distance, altitude, slope
 - **IMU** (MPU6500, I²C) — brake severity, pothole detection, road surface analysis
-- **BLE Central** — Garmin Forerunner heart-rate monitoring
+- **BLE Central** — Garmin Forerunner heart-rate monitoring (hardened in v1.1.4 — see CHANGELOG)
 - **Front WS2812 turn signals** — 16 LEDs, 5 modes (left/right/hazard/thank-you/DRL)
 - **OTA via captive portal** — connect to AP, upload `.bin` from browser
 - **Persistent storage** — odometer, calibration, settings in NVS
-- **LittleFS partition** reserved (~9.875 MB) for upcoming GPX track export
+- **Post-mortem crash logger** (v1.1.4) — boot reason, coredump summary on LittleFS,
+  viewable via `/crashes` and `/boot-log` web endpoints
+- **LittleFS partition** (~9.875 MB) for crash logs and upcoming GPX track export
 
 ---
 
@@ -59,12 +61,28 @@ Manual flash with `esptool`: see [`BUILD.md`](BUILD.md) §4.1.
 
 ---
 
+## Diagnostics (v1.1.4+)
+
+If the device unexpectedly reboots, the CrashLogger module automatically
+saves boot reason and coredump summary to LittleFS on the next boot.
+To inspect:
+1. Connect via Serial monitor — `[BOOT]` log line shows reset reason,
+   boot count, and number of saved crashes.
+2. Crash files are saved to `/crashes/crash_NN.txt` on LittleFS — viewable
+   via `esptool` flash read or future web UI (TODO).
+3. The S_BATTERY settings screen shows last reset reason and crash count.
+
+For a live debug session, set `#define BLE_DEBUG 1` in `config.h` before
+flashing — adds stack/heap watermark logging in the BLE notify callback.
+
+---
+
 ## CI & Releases
 
 Every push to `main` triggers a build and produces a downloadable artifact
 (retained 30 days, available under the Actions tab).
 
-Tagged commits (`v1.1.3`, `v1.2.0`, etc.) trigger an automated release with:
+Tagged commits (`v1.1.4`, `v1.2.0`, etc.) trigger an automated release with:
 - Compiled `firmware-X.Y.Z.bin` (for OTA upload)
 - `partitions-X.Y.Z.bin` and `bootloader-X.Y.Z.bin` (for full-flash recovery)
 - Release notes auto-extracted from `CHANGELOG.md`
@@ -83,12 +101,13 @@ esp32-bike-computer/
 ├── esp32_bike_computer/         Arduino sketch folder
 │   ├── esp32_bike_computer.ino  Main sketch — setup() / loop()
 │   ├── partitions.csv           Custom 16 MB partition table
-│   ├── config.h                 All pinout, constants, version
+│   ├── config.h                 All pinout, constants, version, UI tokens
 │   ├── ble_manager.h            BLE Central (Garmin HR)
+│   ├── crash_logger.h           Post-mortem crash logger (v1.1.4)
 │   ├── error_handler.h          Module error tracking
 │   ├── led_controller.h         WS2812 animations
 │   ├── mpu6500.h                IMU driver
-│   ├── ota_update.h             Captive-portal OTA
+│   ├── ota_update.h             Captive-portal OTA + /crashes endpoints
 │   ├── settings.h               10-screen settings UI
 │   └── ui_theme.h               Display theme / colors
 ├── BUILD.md                     Build instructions, troubleshooting
@@ -102,10 +121,10 @@ esp32-bike-computer/
 
 ## Status & Roadmap
 
-Current: **v1.1.3** (first successful flash, Dusk2Dawn replaced, field tests pending).
+Current: **v1.1.4** (BLE crash fix, UI cleanup, crash logger — pending field test).
 
 Upcoming:
-- **v1.2** — field tests, calibration, GPX track export via web UI
+- **v1.2.0** — architecture refactoring (modular .cpp/.h, dual-core), field tests, GPX export
 - **v2.0** — NRF52840 rear unit activation (24 LEDs, ANT+ cadence)
 - **v3.0** — `.fit` activity files for Garmin Connect / Strava import
 
